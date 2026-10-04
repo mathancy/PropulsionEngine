@@ -1,0 +1,7 @@
+// expect: needs `sound:`
+header:
+	needs system:Audio
+
+implement:
+	every frame:
+		do Play on Audio volume:0.5

@@ -1,0 +1,7 @@
+// expect: add `needs component:transform`
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		make Transform.Loc.X 1.0

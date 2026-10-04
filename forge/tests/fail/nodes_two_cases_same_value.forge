@@ -1,0 +1,11 @@
+// expect: same value
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		choose Count:
+			case 1:
+				finish
+			case 1:
+				finish

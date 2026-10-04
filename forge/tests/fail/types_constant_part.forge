@@ -1,0 +1,7 @@
+// expect: is a constant and can't be changed
+header:
+	constant name:Home type:vector3 x:1 y:2 z:3
+
+implement:
+	every frame:
+		make Home.X 2.0

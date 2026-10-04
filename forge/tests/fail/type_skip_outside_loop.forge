@@ -1,0 +1,7 @@
+// expect: only work inside a loop
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		skip

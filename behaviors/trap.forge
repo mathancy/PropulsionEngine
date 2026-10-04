@@ -1,0 +1,24 @@
+// trap.forge: when stepped on, waits two seconds, hurts the player, and drops a row of coins.
+
+header:
+	needs component:Transform
+	needs file:"player.forge" as Player when:used
+	needs file:"coin.forge" as Coin when:used
+
+	variable name:Armed type:boolean
+
+implement:
+	when Self touches Player as Victim:
+		if Armed is true, then finish
+		make Armed true
+		print "Trap triggered"
+		// node 1: Delay
+		after 2 seconds:
+			do TakeDamage on Victim amount:20
+			print "Trap sprung"
+			// node 2: Loop [0 to 4]
+			for Index from 0 to 4:
+				remember Spacing decimal of Index
+				remember Along Spacing times 2.0
+				// node 3: Spawn Object
+				spawn Coin at:vector x:Along y:1 z:0 as Reward

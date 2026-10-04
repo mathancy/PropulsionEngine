@@ -1,0 +1,7 @@
+// expect: a trace goes from one position
+header:
+	variable name:Last type:hit
+
+implement:
+	every frame:
+		make Last trace from 5 to 6

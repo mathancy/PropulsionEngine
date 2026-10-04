@@ -1,0 +1,10 @@
+// expect: has no field `nope`
+header:
+	struct name:Item
+		field name:Cost type:integer
+	table name:Items type:Item
+		row key:"a" Nope:1
+
+implement:
+	every frame:
+		finish

@@ -1,0 +1,7 @@
+// expect: i don't know `ghost`
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		make Health Ghost

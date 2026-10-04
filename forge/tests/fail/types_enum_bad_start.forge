@@ -1,0 +1,8 @@
+// expect: starts as one of its values
+header:
+	enum name:Mode values:Idle Chasing
+	variable name:State type:Mode value:Nope
+
+implement:
+	every frame:
+		finish

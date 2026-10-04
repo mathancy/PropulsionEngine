@@ -1,0 +1,7 @@
+// expect: `self` is reserved
+header:
+	variable name:Self type:boolean
+
+implement:
+	every frame:
+		finish

@@ -1,0 +1,7 @@
+// expect: at least two values
+header:
+	enum name:Mode values:Idle
+
+implement:
+	every frame:
+		finish

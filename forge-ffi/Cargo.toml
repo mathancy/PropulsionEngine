@@ -1,0 +1,12 @@
+[package]
+name = "forge-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C interface to the ForgeScript interpreter, for hosting scripts inside an engine or editor"
+
+[lib]
+name = "forge_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+forge = { path = "../forge" }

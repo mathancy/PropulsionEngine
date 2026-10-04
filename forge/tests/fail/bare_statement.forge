@@ -1,0 +1,6 @@
+// expect: has to say when it runs
+header:
+	variable name:Switch type:boolean
+
+implement:
+	if Switch is true, then make Switch false

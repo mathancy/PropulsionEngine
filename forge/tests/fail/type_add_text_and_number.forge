@@ -1,0 +1,8 @@
+// expect: can't do arithmetic on a `text` and an `integer`
+header:
+	variable name:Label type:text
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		make Label Label plus Count

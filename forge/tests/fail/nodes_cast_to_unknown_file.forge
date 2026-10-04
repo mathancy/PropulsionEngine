@@ -1,0 +1,7 @@
+// expect: isn't a file from the header
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		remember Foe cast Self to Ghost

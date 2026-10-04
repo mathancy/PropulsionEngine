@@ -1,0 +1,7 @@
+// expect: `print` shows numbers, text, booleans, vectors, and colors
+header:
+	variable name:Points type:list of vector3
+
+implement:
+	every frame:
+		print Points

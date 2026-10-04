@@ -1,0 +1,7 @@
+// expect: isn't a timer or a named `only once`
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		reset Count

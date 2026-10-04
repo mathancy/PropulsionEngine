@@ -1,0 +1,7 @@
+// expect: isn't a gate
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		open Count

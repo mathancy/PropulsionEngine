@@ -1,0 +1,9 @@
+// expect: picks by a whole number
+header:
+	variable name:Speed type:decimal
+
+implement:
+	every frame:
+		choose Speed:
+			case 1:
+				finish

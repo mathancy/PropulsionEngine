@@ -1,0 +1,21 @@
+// moving_platform.forge: travels back and forth between two points.
+
+header:
+	needs component:Transform
+
+	variable name:PointA type:vector3 x:0 y:0 z:0 exposed:true
+	variable name:PointB type:vector3 x:0 y:0 z:10 exposed:true
+	variable name:TravelTime type:decimal value:4.0 exposed:true
+	variable name:Progress type:decimal
+	variable name:Returning type:boolean
+
+implement:
+	every frame:
+		remember Rate 1.0 divided by TravelTime
+		if Returning is false:
+			add Rate per second to Progress, capped at 1
+			if Progress is at least 1, then make Returning true
+		otherwise:
+			subtract Rate per second from Progress, floored at 0
+			if Progress is at most 0, then make Returning false
+		make Transform.Loc Progress of the way from PointA to PointB

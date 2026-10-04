@@ -1,0 +1,11 @@
+// expect: two rows
+header:
+	struct name:Item
+		field name:Cost type:integer
+	table name:Items type:Item
+		row key:"a" Cost:1
+		row key:"a" Cost:2
+
+implement:
+	every frame:
+		finish

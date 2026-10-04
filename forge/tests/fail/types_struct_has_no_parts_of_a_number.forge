@@ -1,0 +1,10 @@
+// expect: has no parts
+header:
+	struct name:Item
+		field name:Cost type:integer
+	variable name:Held type:Item
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		make Count.X 1

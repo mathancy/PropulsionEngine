@@ -1,0 +1,7 @@
+// expect: is a constant and can't be changed
+header:
+	constant name:MaxHealth type:integer value:100
+
+implement:
+	every frame:
+		make MaxHealth 50

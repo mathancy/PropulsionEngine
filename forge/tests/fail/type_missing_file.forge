@@ -1,0 +1,7 @@
+// expect: there is no file at
+header:
+	needs file:"nowhere.forge" as Nowhere
+
+implement:
+	every frame:
+		finish

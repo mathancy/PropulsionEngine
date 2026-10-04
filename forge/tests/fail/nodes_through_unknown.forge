@@ -1,0 +1,8 @@
+// expect: i don't know `nothing`
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		through Nothing:
+			finish

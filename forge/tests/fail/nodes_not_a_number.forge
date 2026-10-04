@@ -1,0 +1,7 @@
+// expect: `not` needs a `boolean`
+header:
+	variable name:Ready type:boolean
+
+implement:
+	every frame:
+		make Ready not 5

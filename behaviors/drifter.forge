@@ -1,0 +1,12 @@
+// drifter.forge: floats along a direction at a set speed (vector maths).
+
+header:
+	needs component:Transform
+
+	variable name:Direction type:vector3 x:1 y:0 z:0 exposed:true
+	variable name:Speed type:decimal value:2.0 exposed:true
+
+implement:
+	every frame:
+		remember Velocity Direction times Speed
+		add Velocity per second to Transform.Loc

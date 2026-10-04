@@ -1,0 +1,7 @@
+// expect: must be an `integer`, but this is a `text`
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		make Health "full"

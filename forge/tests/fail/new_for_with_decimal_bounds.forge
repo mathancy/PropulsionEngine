@@ -1,0 +1,8 @@
+// expect: where the count starts must be an `integer`
+header:
+	variable name:Total type:integer
+
+implement:
+	every frame:
+		for Index from 1.5 to 3:
+			add Index to Total

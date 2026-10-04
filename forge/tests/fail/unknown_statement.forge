@@ -1,0 +1,7 @@
+// expect: i expected one of
+header:
+	variable name:Switch type:boolean
+
+implement:
+	every frame:
+		fly Switch

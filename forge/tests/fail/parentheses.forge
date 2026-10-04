@@ -1,0 +1,7 @@
+// expect: parentheses are not part of forgescript
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		make Health (Health minus 5)

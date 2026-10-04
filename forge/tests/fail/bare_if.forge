@@ -1,0 +1,8 @@
+// expect: must compare something
+header:
+	variable name:Switch type:boolean
+
+implement:
+	every frame:
+		if Switch:
+			finish

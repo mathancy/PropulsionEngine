@@ -1,0 +1,25 @@
+{
+	"comments": {
+		"lineComment": "//"
+	},
+	"autoClosingPairs": [
+		{ "open": "\"", "close": "\"", "notIn": ["string", "comment"] }
+	],
+	"surroundingPairs": [
+		["\"", "\""]
+	],
+	"folding": {
+		"offSide": true
+	},
+	"indentationRules": {
+		"increaseIndentPattern": ":\\s*(//.*)?$",
+		"decreaseIndentPattern": "^\\s*(otherwise)\\b.*:\\s*(//.*)?$"
+	},
+	"onEnterRules": [
+		{
+			"beforeText": ":\\s*(//.*)?$",
+			"action": { "indent": "indent" }
+		}
+	],
+	"wordPattern": "[A-Za-z_][A-Za-z0-9_]*"
+}

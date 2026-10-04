@@ -1,0 +1,8 @@
+// expect: use `decimal of
+header:
+	variable name:Speed type:decimal
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		make Speed Count

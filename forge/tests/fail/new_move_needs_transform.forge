@@ -1,0 +1,7 @@
+// expect: add `needs component:transform` to the header before moving `self`
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		move Self forward by 1.0

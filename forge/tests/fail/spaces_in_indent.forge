@@ -1,0 +1,7 @@
+// expect: tabs only
+header:
+    variable name:Switch type:boolean
+
+implement:
+	every frame:
+		finish

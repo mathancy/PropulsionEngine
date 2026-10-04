@@ -1,0 +1,7 @@
+// expect: expected `toward` or a direction
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		move Self sideways by 1.0

@@ -1,0 +1,8 @@
+// expect: must be a `mode`
+header:
+	enum name:Mode values:Idle Chasing
+	variable name:State type:Mode
+
+implement:
+	every frame:
+		make State 5

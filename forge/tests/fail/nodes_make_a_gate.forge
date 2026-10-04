@@ -1,0 +1,7 @@
+// expect: is a gate; use `open
+header:
+	variable name:Door type:gate
+
+implement:
+	every frame:
+		make Door true

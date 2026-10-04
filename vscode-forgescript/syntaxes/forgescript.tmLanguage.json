@@ -1,0 +1,179 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "ForgeScript",
+	"scopeName": "source.forgescript",
+	"patterns": [
+		{ "include": "#node-marker" },
+		{ "include": "#comment" },
+		{ "include": "#string" },
+		{ "include": "#section" },
+		{ "include": "#boolean" },
+		{ "include": "#declared-name" },
+		{ "include": "#declared-reference" },
+		{ "include": "#key" },
+		{ "include": "#action-definition" },
+		{ "include": "#do-call" },
+		{ "include": "#result-of" },
+		{ "include": "#as-name" },
+		{ "include": "#self" },
+		{ "include": "#field-path" },
+		{ "include": "#phrase" },
+		{ "include": "#type" },
+		{ "include": "#declaration" },
+		{ "include": "#control" },
+		{ "include": "#statement" },
+		{ "include": "#comparison" },
+		{ "include": "#operator" },
+		{ "include": "#unit" },
+		{ "include": "#number" },
+		{ "include": "#identifier" }
+	],
+	"repository": {
+		"node-marker": {
+			"comment": "// node 6: Move Object [detail]. The tools read these (SPEC 10), so make them stand out.",
+			"match": "(//)\\s*(node)\\s+(\\d+)\\s*(:)(.*)$",
+			"name": "comment.line.double-slash.node-marker.forgescript",
+			"captures": {
+				"1": { "name": "punctuation.definition.comment.forgescript" },
+				"2": { "name": "keyword.other.node-marker.forgescript" },
+				"3": { "name": "constant.numeric.node-id.forgescript" },
+				"4": { "name": "punctuation.separator.forgescript" },
+				"5": { "name": "markup.italic.node-name.forgescript" }
+			}
+		},
+		"comment": {
+			"match": "(//).*$",
+			"name": "comment.line.double-slash.forgescript",
+			"captures": {
+				"1": { "name": "punctuation.definition.comment.forgescript" }
+			}
+		},
+		"string": {
+			"begin": "\"",
+			"end": "\"",
+			"name": "string.quoted.double.forgescript",
+			"beginCaptures": { "0": { "name": "punctuation.definition.string.begin.forgescript" } },
+			"endCaptures": { "0": { "name": "punctuation.definition.string.end.forgescript" } }
+		},
+		"section": {
+			"match": "^(header|implement)\\s*(:)",
+			"captures": {
+				"1": { "name": "keyword.control.section.forgescript" },
+				"2": { "name": "punctuation.separator.forgescript" }
+			}
+		},
+		"boolean": {
+			"match": "\\b(true|false)\\b",
+			"name": "constant.language.boolean.forgescript"
+		},
+		"declared-name": {
+			"comment": "name:Health in variable / constant / event declarations",
+			"match": "\\b(name)(:)([A-Za-z_][A-Za-z0-9_]*)",
+			"captures": {
+				"1": { "name": "variable.parameter.key.forgescript" },
+				"2": { "name": "punctuation.separator.key-value.forgescript" },
+				"3": { "name": "variable.other.forgescript" }
+			}
+		},
+		"declared-reference": {
+			"comment": "needs component:Transform / system:Audio / entity:Player / entities:Foes",
+			"match": "\\b(component|system|entity|entities)(:)([A-Za-z_][A-Za-z0-9_]*)",
+			"captures": {
+				"1": { "name": "variable.parameter.key.forgescript" },
+				"2": { "name": "punctuation.separator.key-value.forgescript" },
+				"3": { "name": "entity.name.type.forgescript" }
+			}
+		},
+		"key": {
+			"comment": "Any named pair: type:integer, value:1, amount:10, at:vector ...",
+			"match": "\\b([a-z][A-Za-z0-9_]*)(:)(?=\\S)",
+			"captures": {
+				"1": { "name": "variable.parameter.key.forgescript" },
+				"2": { "name": "punctuation.separator.key-value.forgescript" }
+			}
+		},
+		"action-definition": {
+			"match": "\\b(action)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+			"captures": {
+				"1": { "name": "storage.type.function.forgescript" },
+				"2": { "name": "entity.name.function.forgescript" }
+			}
+		},
+		"do-call": {
+			"match": "\\b(do)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s+(on)\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+			"captures": {
+				"1": { "name": "keyword.other.statement.forgescript" },
+				"2": { "name": "entity.name.function.forgescript" },
+				"3": { "name": "keyword.operator.word.forgescript" },
+				"4": { "name": "entity.name.type.forgescript" }
+			}
+		},
+		"result-of": {
+			"match": "\\b(result\\s+of)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+			"captures": {
+				"1": { "name": "support.function.phrase.forgescript" },
+				"2": { "name": "entity.name.function.forgescript" }
+			}
+		},
+		"as-name": {
+			"match": "\\b(as)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+			"captures": {
+				"1": { "name": "keyword.operator.word.forgescript" },
+				"2": { "name": "entity.name.type.forgescript" }
+			}
+		},
+		"self": {
+			"match": "\\bSelf\\b",
+			"name": "variable.language.self.forgescript"
+		},
+		"field-path": {
+			"comment": "Transform.Loc.X: the only place dots appear",
+			"match": "\\b([A-Z][A-Za-z0-9_]*)((?:\\.[A-Z][A-Za-z0-9_]*)+)",
+			"captures": {
+				"1": { "name": "entity.name.type.component.forgescript" },
+				"2": { "name": "variable.other.property.forgescript" }
+			}
+		},
+		"phrase": {
+			"match": "\\b(?:time since start|of the way from|per second|distance from|count of|absolute value of|text of|decimal of|integer of|item|axis|vector|clamp|between|map|random decimal|random integer|normalized|length of|dot product of|rotation looking from|rotation|pitch|yaw|roll|forward of|right of|up of|ease|turn|not|position of|level name|cast|format|new|row|trace from|sweep from|radius)\\b",
+			"name": "support.function.phrase.forgescript"
+		},
+		"type": {
+			"match": "\\b(?:integer|decimal|boolean|text|vector2|vector3|color|entity|timer|gate|hit|list)\\b",
+			"name": "storage.type.forgescript"
+		},
+		"declaration": {
+			"match": "\\b(?:variable|constant|needs|event|tag|entry|enum|struct|table|field|values|row)\\b",
+			"name": "storage.type.declaration.forgescript"
+		},
+		"control": {
+			"match": "\\b(?:if|otherwise|then|while|repeat|for|each|finish|skip|stop loop|give back|after|every|when|only once|first|times|alternate|through|choose|case|animate|over|damaged|hits)\\b",
+			"name": "keyword.control.forgescript"
+		},
+		"statement": {
+			"match": "\\b(?:make|add|subtract|multiply|divide|remove|send|remember|reset|spawn|move|print|destroy|gives|do|clear|open|close|toggle|damage|attach|detach|tell)\\b",
+			"name": "keyword.other.statement.forgescript"
+		},
+		"comparison": {
+			"match": "\\bis(?:\\s+(?:not|above|below|at\\s+least|at\\s+most|missing|present|pressing))*\\b|\\b(?:starts\\s+pressing|stops\\s+pressing|stops\\s+touching|touches|sends|changes|created|destroyed|frame|contains|does not contain)\\b",
+			"name": "keyword.operator.comparison.forgescript"
+		},
+		"operator": {
+			"match": "\\b(?:plus|minus|times|divided by|remainder after dividing by|joined with|capped at|floored at|toward|forward|back|left|right|up|down|and|or|of|on|to|from|by|at|in)\\b",
+			"name": "keyword.operator.word.forgescript"
+		},
+		"unit": {
+			"match": "\\bseconds?\\b",
+			"name": "keyword.other.unit.forgescript"
+		},
+		"identifier": {
+			"comment": "Anything left over is a name (variable, parameter, remembered value). Must stay last.",
+			"match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b",
+			"name": "variable.other.forgescript"
+		},
+		"number": {
+			"match": "\\b\\d+(?:\\.\\d+)?\\b",
+			"name": "constant.numeric.forgescript"
+		}
+	}
+}

@@ -1,0 +1,8 @@
+// expect: can't be the name of a field
+header:
+	struct name:Item
+		field name:X type:integer
+
+implement:
+	every frame:
+		finish
