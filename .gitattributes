@@ -1,0 +1,51 @@
+* text=auto
+
+# Source files
+*.cpp text
+*.h text
+*.hpp text
+*.c text
+
+# CMake
+CMakeLists.txt text
+*.cmake text
+
+# Documentation
+*.md text
+*.txt text
+
+# Scripts
+*.ps1 text
+*.sh text
+
+# Visual Studio
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.vcxproj.filters text eol=crlf
+
+# Binary files
+*.exe binary
+*.dll binary
+*.so binary
+*.a binary
+*.lib binary
+*.dylib binary
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.bmp binary
+
+# Models
+*.obj binary
+*.fbx binary
+*.blend binary
+
+# Archives
+*.zip binary
+*.7z binary
+*.tar binary
+*.gz binary

@@ -1,0 +1,39 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.h": "cpp",
+            "*.cpp": "cpp",
+            "*.hpp": "cpp",
+            "CMakeLists.txt": "cmake"
+        },
+        "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+        "cmake.sourceDirectory": "${workspaceFolder}",
+        "cmake.buildDirectory": "${workspaceFolder}/build",
+        "editor.formatOnSave": false,
+        "files.exclude": {
+            "**/build": true,
+            "**/.vs": true,
+            "**/*.vcxproj": true,
+            "**/*.vcxproj.filters": true,
+            "**/*.vcxproj.user": true,
+            "**/*.sln": true
+        },
+        "search.exclude": {
+            "**/build": true,
+            "**/external": true
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-vscode.cpptools",
+            "ms-vscode.cmake-tools",
+            "twxs.cmake",
+            "ms-vscode.cpptools-extension-pack"
+        ]
+    }
+}
