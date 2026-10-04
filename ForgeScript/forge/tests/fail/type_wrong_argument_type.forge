@@ -1,0 +1,10 @@
+// expect: `amount:` must be an `integer`, but this is a `text`
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		do Hurt amount:"lots"
+
+	action Hurt amount:integer:
+		subtract amount from Health

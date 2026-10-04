@@ -1,0 +1,7 @@
+// expect: looks in a list
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		if Count contains 1, then finish

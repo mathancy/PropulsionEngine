@@ -1,0 +1,8 @@
+// expect: expected `seconds` after the delay
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		after 2:
+			finish

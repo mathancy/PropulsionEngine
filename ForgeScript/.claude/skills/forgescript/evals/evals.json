@@ -1,0 +1,28 @@
+{
+  "skill_name": "forgescript",
+  "evals": [
+    {
+      "id": 1,
+      "name": "interact-gate",
+      "prompt": "I need a ForgeScript behavior for a sliding gate in my game. When the player is within 4 units of it and presses the interact key, it should open (slide up 3 units over about a second), play a sound, and then close itself again 5 seconds later. The slide height and the 5 seconds should be tweakable per placed gate in the editor. Save it as gate.forge.",
+      "expected_output": "A gate.forge that compiles with forgec: needs Transform/Input/Audio, finds the player by tag or file, uses distance + Input starts pressing interact, animates or eases Transform.Loc.Y, plays a sound, closes after a delay, exposes tunables.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "patrol-chase-enemy",
+      "prompt": "Write a ForgeScript for a guard enemy. It patrols between a few waypoints (a list of positions I can edit), and when the player (examples/player.forge in this repo) comes within 6 units it chases them instead; if the player gets within 1.5 units it hurts them (use whatever damage action the player script already has) at most once per second. If the player gets beyond 10 units it gives up and goes back to patrolling. Save it as guard.forge.",
+      "expected_output": "A guard.forge that compiles: enum for patrol/chase state, list of vector3 waypoints with entry lines, move toward / distance phrases, one-operator expressions split with remember, calls player's real TakeDamage action with correct typed argument, attack cooldown via timer.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "fix-broken-turret",
+      "prompt": "This turret script (G:/forgescript-workspace/files/broken_turret.forge) doesn't compile and I don't know why. Fix it so it compiles, keeping what it is meant to do (the comment at the top says what that is). Save the fixed version as turret.forge and tell me what you changed.",
+      "expected_output": "A turret.forge that compiles with forgec and keeps the original behavior: faces player in range, fires every 2 seconds using Ammo, reloads, still has the timer and Reloading flag. Summary lists the real causes (spaces indent, bare statement under implement, parentheses, mixed and/or, bare `if Reloading:`, `-=`, Input.moveForward, out-of-scope Gap, integer/decimal mismatches).",
+      "files": [
+        "G:/forgescript-workspace/files/broken_turret.forge"
+      ]
+    }
+  ]
+}

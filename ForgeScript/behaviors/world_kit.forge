@@ -1,0 +1,64 @@
+// world_kit.forge: damage, hits, attaching, visibility, messages, casting and the engine systems.
+
+header:
+	needs component:Transform
+	needs component:Visibility
+	needs component:Collision
+	needs system:Audio
+	needs system:Animation
+	needs system:Game
+	needs system:UI
+	needs file:"math_kit.forge" as Pad when:used
+
+	variable name:Health type:decimal value:100.0
+	variable name:LastHit type:decimal value:0.0
+	variable name:Attacker type:entity
+	variable name:Pings type:integer value:0
+	variable name:Bumps type:integer value:0
+
+implement:
+	when damaged as Amount from Source:
+		subtract Amount from Health
+		make LastHit Amount
+		make Attacker Source
+
+	when Self hits Pad as Surface:
+		add 1 to Bumps
+
+	action Hurt target:entity amount:decimal:
+		damage target by amount
+
+	action Hide:
+		make Visibility.Shown false
+
+	action Reveal:
+		make Visibility.Shown true
+
+	action Ghost:
+		make Collision.Enabled false
+
+	action Follow target:entity:
+		attach Self to target
+
+	action Release:
+		detach Self
+
+	action Poke target:entity:
+		tell target to Ping amount:3
+
+	action Ping amount:integer:
+		add amount to Pings
+
+	action IsPad target:entity gives boolean:
+		remember Found cast target to Pad
+		give back Found is present
+
+	action Effects:
+		do Play on Audio sound:"boom.wav" at:Transform.Loc volume:0.5
+		do Play on Audio sound:"hum.wav" attachedTo:Self
+		do Play on Animation animation:"walk" loop:true
+		do PlayMontage on Animation montage:"attack" section:"swing"
+		do Create on UI widget:"hud"
+		do Remove on UI element:"hud"
+		do OpenLevel on Game level:"forest"
+		do SetPaused on Game paused:true

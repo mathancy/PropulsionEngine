@@ -1,0 +1,7 @@
+// expect: same kind
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		make Count clamp Count between 0 and 1.5

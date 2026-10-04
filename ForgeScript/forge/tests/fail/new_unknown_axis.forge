@@ -1,0 +1,8 @@
+// expect: isn't an analog input of `input`
+header:
+	needs system:Input
+	variable name:Amount type:decimal
+
+implement:
+	every frame:
+		make Amount axis fly of Input

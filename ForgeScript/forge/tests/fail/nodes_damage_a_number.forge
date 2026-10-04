@@ -1,0 +1,7 @@
+// expect: what you damage must be an `entity`
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		damage 5 by 2.0

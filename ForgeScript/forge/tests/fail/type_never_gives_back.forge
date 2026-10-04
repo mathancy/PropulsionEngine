@@ -1,0 +1,7 @@
+// expect: never does `give back`
+header:
+	variable name:Health type:integer
+
+implement:
+	action GetHealth gives integer:
+		finish

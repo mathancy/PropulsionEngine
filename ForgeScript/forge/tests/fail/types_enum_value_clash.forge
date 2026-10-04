@@ -1,0 +1,8 @@
+// expect: already declared
+header:
+	enum name:Mode values:Idle Chasing
+	variable name:Idle type:integer
+
+implement:
+	every frame:
+		finish

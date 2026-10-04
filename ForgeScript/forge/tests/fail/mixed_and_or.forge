@@ -1,0 +1,9 @@
+// expect: cannot be mixed
+header:
+	variable name:A type:boolean
+	variable name:B type:boolean
+	variable name:C type:boolean
+
+implement:
+	every frame:
+		if A is true and B is true or C is true, then finish

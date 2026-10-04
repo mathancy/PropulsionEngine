@@ -1,0 +1,7 @@
+// expect: a timer is compared with a duration
+header:
+	variable name:SinceHit type:timer
+
+implement:
+	every frame:
+		if SinceHit is above 5, then finish

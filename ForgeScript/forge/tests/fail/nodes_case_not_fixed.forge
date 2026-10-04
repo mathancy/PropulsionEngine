@@ -1,0 +1,9 @@
+// expect: a `case` is a fixed value
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		choose Count:
+			case Count:
+				finish

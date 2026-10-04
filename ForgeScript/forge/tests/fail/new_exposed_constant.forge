@@ -1,0 +1,7 @@
+// expect: `exposed:` isn't used in `constant`
+header:
+	constant name:Speed type:decimal value:5.0 exposed:true
+
+implement:
+	every frame:
+		finish

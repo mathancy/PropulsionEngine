@@ -1,0 +1,7 @@
+// expect: is a constant and can't be changed
+header:
+	constant name:K type:integer value:1
+
+implement:
+	every frame:
+		clear K

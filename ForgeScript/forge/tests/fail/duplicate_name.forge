@@ -1,0 +1,7 @@
+// expect: already declared
+header:
+	constant name:HealingOrb type:integer value:50
+
+implement:
+	action HealingOrb:
+		finish

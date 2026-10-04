@@ -1,0 +1,7 @@
+// expect: only works inside an action that says `gives
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		give back Health

@@ -1,0 +1,7 @@
+// expect: no optional filler words
+header:
+	variable name:Switch type:boolean
+
+implement:
+	every frame:
+		make Switch be false

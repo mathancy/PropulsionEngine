@@ -1,0 +1,7 @@
+// expect: has no `loudness:`
+header:
+	needs system:Audio
+
+implement:
+	every frame:
+		do Play on Audio sound:"x.wav" loudness:1

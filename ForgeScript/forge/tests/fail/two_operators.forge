@@ -1,0 +1,7 @@
+// expect: the end of the line
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		make Health Health minus 5 minus 1

@@ -1,0 +1,7 @@
+// expect: can't be sent with `tell`
+header:
+	variable name:Items type:list of integer
+
+implement:
+	every frame:
+		tell Self to Wake items:Items

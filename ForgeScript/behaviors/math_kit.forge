@@ -1,0 +1,88 @@
+// math_kit.forge: one action for each math, vector and logic node, so tests (and curious people) can ask for their answers.
+
+header:
+	needs component:Transform
+
+	variable name:Dir type:vector3 x:3 y:0 z:4
+	variable name:Rolls type:list of integer
+	variable name:Ready type:boolean value:true
+
+implement:
+	action Limit value:integer gives integer:
+		give back clamp value between 0 and 10
+
+	action LimitDecimal value:decimal gives decimal:
+		give back clamp value between -1.0 and 1.0
+
+	action Scale speed:decimal gives decimal:
+		give back map speed from 0.0 to 10.0 into 0.0 to 1.0
+
+	action Roll gives integer:
+		give back random integer from 1 to 6
+
+	action Jitter gives decimal:
+		give back random decimal from 5.0 to 6.0
+
+	action Unit gives vector3:
+		give back normalized Dir
+
+	action Size gives decimal:
+		give back length of Dir
+
+	action Alignment other:vector3 gives decimal:
+		give back dot product of Dir and other
+
+	action Facing target:vector3 gives vector3:
+		give back rotation looking from Transform.Loc to target
+
+	action Pose gives vector3:
+		give back rotation pitch:10 yaw:20 roll:30
+
+	action Ahead gives vector3:
+		give back forward of Self
+
+	action Side gives vector3:
+		give back right of Self
+
+	action Above gives vector3:
+		give back up of Self
+
+	action Opposite value:boolean gives boolean:
+		give back not value
+
+	action Label gives text:
+		give back "open" if Ready is true otherwise "closed"
+
+	action Pick yes:integer no:integer gives integer:
+		give back yes if Ready is true otherwise no
+
+	action Slide current:decimal gives decimal:
+		give back ease current toward 10.0 at 5.0
+
+	action Glide current:vector3 gives vector3:
+		give back ease current toward Dir at 5.0
+
+	action Swing current:vector3 gives vector3:
+		give back turn current toward Dir at 90.0
+
+	action Remember value:integer:
+		add value to Rolls, if new
+
+	action Where value:integer gives integer:
+		give back position of value in Rolls
+
+	action Describe gives text:
+		give back format "Dir is {Dir} and ready is {Ready}"
+
+	action Sideways gives decimal:
+		give back Dir.X
+
+	action Bend value:decimal:
+		make Dir.Y value
+
+	action Heading gives decimal:
+		remember Turned rotation pitch:10 yaw:20 roll:30
+		give back Turned.Yaw
+
+	action Level gives text:
+		give back level name

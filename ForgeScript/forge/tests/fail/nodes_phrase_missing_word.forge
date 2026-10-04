@@ -1,0 +1,7 @@
+// expect: expected `and`
+header:
+	variable name:Y type:integer
+
+implement:
+	every frame:
+		make Y clamp Y between 0

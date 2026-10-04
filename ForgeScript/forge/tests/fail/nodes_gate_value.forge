@@ -1,0 +1,7 @@
+// expect: starts `value:open`
+header:
+	variable name:Door type:gate value:ajar
+
+implement:
+	every frame:
+		finish

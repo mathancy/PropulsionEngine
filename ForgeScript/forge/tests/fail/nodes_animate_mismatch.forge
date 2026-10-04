@@ -1,0 +1,8 @@
+// expect: `animate` moves a decimal or a vector
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		animate X from 1.0 to "a" over 1 second:
+			finish

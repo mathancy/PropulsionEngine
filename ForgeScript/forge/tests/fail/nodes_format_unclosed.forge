@@ -1,0 +1,7 @@
+// expect: needs a closing `}`
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		print format "Hi {Nobody"

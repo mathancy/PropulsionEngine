@@ -1,0 +1,7 @@
+// expect: blends two decimals or two vectors
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		make Health 0.5 of the way from 1 to 10

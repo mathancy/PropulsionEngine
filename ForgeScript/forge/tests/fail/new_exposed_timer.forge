@@ -1,0 +1,7 @@
+// expect: can't be exposed
+header:
+	variable name:SinceHit type:timer exposed:true
+
+implement:
+	every frame:
+		finish

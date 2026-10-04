@@ -1,0 +1,7 @@
+// expect: must be the same kind
+header:
+	variable name:X type:text
+
+implement:
+	every frame:
+		make X "a" if true is true otherwise 5

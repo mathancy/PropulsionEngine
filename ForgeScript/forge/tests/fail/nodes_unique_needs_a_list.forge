@@ -1,0 +1,7 @@
+// expect: only works when adding to a list
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		add 1 to Count, if new

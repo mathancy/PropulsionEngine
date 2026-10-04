@@ -1,0 +1,7 @@
+// expect: the engine has no component `teleporter`
+header:
+	needs component:Teleporter
+
+implement:
+	every frame:
+		finish

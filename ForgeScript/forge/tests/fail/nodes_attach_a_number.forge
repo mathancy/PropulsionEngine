@@ -1,0 +1,7 @@
+// expect: what you attach must be an `entity`
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		attach 5 to Self

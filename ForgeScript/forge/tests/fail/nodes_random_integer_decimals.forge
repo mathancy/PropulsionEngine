@@ -1,0 +1,7 @@
+// expect: to be an `integer`
+header:
+	variable name:X type:integer
+
+implement:
+	every frame:
+		make X random integer from 1.0 to 6

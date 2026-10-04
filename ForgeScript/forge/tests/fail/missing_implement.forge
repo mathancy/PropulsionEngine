@@ -1,0 +1,3 @@
+// expect: the `implement:` section
+header:
+	variable name:Switch type:boolean

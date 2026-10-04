@@ -1,0 +1,7 @@
+// expect: needs a list
+header:
+	variable name:Count type:integer
+
+implement:
+	every frame:
+		remove item 0 from Count

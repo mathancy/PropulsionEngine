@@ -1,0 +1,7 @@
+// expect: who you tell must be an `entity`
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		tell 5 to Wake

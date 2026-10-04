@@ -1,0 +1,10 @@
+// expect: needs `amount:`
+header:
+	variable name:Health type:integer
+
+implement:
+	every frame:
+		do Hurt
+
+	action Hurt amount:integer:
+		subtract amount from Health

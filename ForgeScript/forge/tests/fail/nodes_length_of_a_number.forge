@@ -1,0 +1,7 @@
+// expect: needs a vector
+header:
+	variable name:X type:decimal
+
+implement:
+	every frame:
+		make X length of X

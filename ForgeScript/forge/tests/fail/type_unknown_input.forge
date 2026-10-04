@@ -1,0 +1,7 @@
+// expect: isn't an input of `input`
+header:
+	needs system:Input
+
+implement:
+	every frame:
+		if Input is pressing teleport, then finish

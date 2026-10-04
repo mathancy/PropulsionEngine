@@ -1,0 +1,7 @@
+// expect: nothing to watch
+header:
+	constant name:MaxHealth type:integer value:100
+
+implement:
+	when MaxHealth changes:
+		finish

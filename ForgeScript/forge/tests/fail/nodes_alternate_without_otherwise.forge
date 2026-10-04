@@ -1,0 +1,8 @@
+// expect: needs an `otherwise:`
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		alternate:
+			finish

@@ -1,0 +1,7 @@
+// expect: isn't a part of a `vector3`
+header:
+	variable name:Dir type:vector3
+
+implement:
+	every frame:
+		make Dir.W 1.0

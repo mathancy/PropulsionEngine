@@ -1,0 +1,46 @@
+// door.forge: slides open while the player stands in the doorway, and closes when they leave.
+//
+// This file is the reference for what the node editor writes: every sentence has a marker,
+// so `forgec nodes behaviors/door.forge` reports no custom code.
+
+header:
+	needs component:Transform
+	needs system:Audio
+	needs file:"player.forge" as Player when:used
+
+	constant name:ClosedHeight type:decimal value:0.0
+	variable name:OpenHeight type:decimal value:3.0 exposed:true
+	variable name:OpenSpeed type:decimal value:1.5 exposed:true
+	variable name:IsOpen type:boolean
+	variable name:Progress type:decimal
+
+implement:
+	// node 1: On Overlap Begin
+	when Self touches Player as Visitor:
+		// node 2: Set Variable
+		make IsOpen true
+
+	// node 3: On Overlap End
+	when Self stops touching Player as Visitor:
+		// node 4: Set Variable
+		make IsOpen false
+
+	// node 5: On Variable Changed [IsOpen]
+	when IsOpen changes:
+		// node 6: Play Sound
+		do Play on Audio sound:"door.wav"
+
+	// node 7: On Tick
+	every frame:
+		// node 8: Branch [IsOpen]
+		if IsOpen is true:
+			// node 9: Change Variable
+			// node 10: Per Second
+			add OpenSpeed per second to Progress, capped at 1
+		otherwise:
+			// node 11: Change Variable
+			// node 12: Per Second
+			subtract OpenSpeed per second from Progress, floored at 0
+		// node 13: Lerp
+		// node 14: Set Location
+		make Transform.Loc.Y Progress of the way from ClosedHeight to OpenHeight

@@ -1,0 +1,10 @@
+// expect: already declared
+header:
+	needs component:Transform
+
+implement:
+	every frame:
+		only once as Intro:
+			finish
+		only once as Intro:
+			finish
