@@ -85,9 +85,9 @@ add_subdirectory(external/lunasvg)
 
 # ForgeScript: scripts (.forge files in a project's Scripts folder) are run by the ForgeScript
 # interpreter, a DLL the editor loads. Scripts are read when Play starts, so changing one needs no
-# rebuild. Build the DLL once with `cargo build --release -p forge-ffi` in the ForgeScript checkout
-# (next to this folder), or point FORGESCRIPT_DIR at it.
-set(FORGESCRIPT_DIR "${PROJECT_SOURCE_DIR}/../ForgeScript" CACHE PATH "The ForgeScript checkout")
+# rebuild. Build the DLL once with `cargo build --release -p forge-ffi` in the ForgeScript folder
+# (inside this repo), or point FORGESCRIPT_DIR at it.
+set(FORGESCRIPT_DIR "${PROJECT_SOURCE_DIR}/ForgeScript" CACHE PATH "The ForgeScript folder")
 find_file(FORGE_FFI_IMPLIB forge_ffi.dll.lib
     HINTS ${FORGESCRIPT_DIR}/target/release ${FORGESCRIPT_DIR}/target/debug NO_DEFAULT_PATH)
 find_file(FORGE_FFI_DLL forge_ffi.dll

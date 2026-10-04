@@ -7,7 +7,7 @@ description: Write, edit, review, explain and debug ForgeScript (.forge) files, 
 
 ForgeScript is a *controlled natural language*: every line matches one of a fixed list of sentence patterns, and anything else is a compile error. Your instincts from C-like languages, Python or Lua will mislead you, because the language was designed so non-programmers can read it (`make Health Health minus 5`, not `Health -= 5`). So write from the patterns below and from existing files, and let the compiler tell you when a line is wrong. Don't invent plausible-looking phrasings.
 
-The repo root is `G:\ForgeScript`. The sources of truth, in order of how often you'll need them:
+The ForgeScript root is `G:\ForgeEngine\ForgeScript`. The sources of truth, in order of how often you'll need them:
 
 - `behaviors/*.forge` and `examples/*.forge`: working scripts. Find the one closest to the request and copy its idioms. `behaviors/*_kit.forge` have one small action per language construct (lists, math, flow, world, types), which makes them a good phrasebook.
 - `SPEC.md`: the full language. Grep it for the exact pattern instead of reading all 750 lines. Sections: 3 header, 3.1 types, 3.2 enums/structs/tables, 4.1 statements and phrase expressions, 4.1b field paths, 4.1c numbers/vectors/traces, 4.2 conditions, 4.3 loops, 4.3a flow (`only once`, `choose`, `animate`...), 4.4 actions and `tell`, 4.5 handlers, 4.6 runtime errors, 5 systems, 6 ambiguity rules.

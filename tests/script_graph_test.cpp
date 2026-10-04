@@ -2331,7 +2331,7 @@ static void aWireToAPinBehindItIsAnS() {
 }
 
 int main(int argc, char** argv) {
-    fs::path forgeScript = argc > 1 ? fs::path(argv[1]) : fs::path("G:/ForgeScript");
+    fs::path forgeScript = argc > 1 ? fs::path(argv[1]) : fs::path("G:/ForgeEngine/ForgeScript");
     setupImGui();
 
     everyRealScriptLaysOutWithoutOverlap(forgeScript);
