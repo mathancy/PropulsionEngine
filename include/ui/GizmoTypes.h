@@ -2,7 +2,7 @@
 
 #include <glm/glm.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 enum class GizmoMode {
     None,
@@ -22,4 +22,4 @@ enum class GizmoAxis {
     Center  // Camera-relative movement
 };
 
-} // namespace Forge
+} // namespace Propulsion

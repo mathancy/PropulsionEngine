@@ -7,7 +7,7 @@
 #include <array>
 #include <memory>
 
-namespace Forge {
+namespace Propulsion {
 
 Shader::Shader(VulkanContext* context, const char* vertexPath, const char* fragmentPath, VkRenderPass renderPass, VkCullModeFlags cullMode, bool depthTestEnable, bool supportsTextures)
     : m_context(context), m_pipeline(VK_NULL_HANDLE), m_pipelineLayout(VK_NULL_HANDLE), 
@@ -978,4 +978,4 @@ std::vector<char> Shader::readFile(const std::string& filename) {
     return buffer;
 }
 
-} // namespace Forge
+} // namespace Propulsion

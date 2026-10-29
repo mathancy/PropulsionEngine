@@ -4,7 +4,7 @@
  * TransformComponent.h
  * Handles position, rotation, and scale for Objects.
  * 
- * Every Object in Forge Engine has a Transform component by default.
+ * Every Object in Propulsion MK I has a Transform component by default.
  * This component cannot be removed from an Object.
  */
 
@@ -12,8 +12,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <cmath>
 
-namespace Forge {
+namespace Propulsion {
 
 /**
  * Transform component - controls position, rotation, and scale of an Object.
@@ -45,7 +46,7 @@ public:
     
     // Transform data
     glm::vec3 position = glm::vec3(0.0f);
-    glm::vec3 rotation = glm::vec3(0.0f);  // Euler angles in degrees
+    glm::vec3 rotation = glm::vec3(0.0f);  // Euler angles in degrees: pitch (about X), roll (about Y), yaw (about Z)
     glm::vec3 scale = glm::vec3(1.0f);
     glm::quat quaternion = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // Identity quaternion
     
@@ -78,10 +79,16 @@ public:
     }
     
     /**
+     * The engine's axes: the world is Z up, forward is +Y and right is +X (right-handed, Blender-style).
+     * Rotation is Euler degrees applied as glm::quat(radians(rotation)): pitch tips about X, roll about Y
+     * (the way the object faces) and yaw turns about Z.
+     */
+
+    /**
      * Get the forward direction vector.
      */
     glm::vec3 getForward() const {
-        return quaternion * glm::vec3(0.0f, 0.0f, -1.0f);
+        return quaternion * glm::vec3(0.0f, 1.0f, 0.0f);
     }
     
     /**
@@ -95,7 +102,7 @@ public:
      * Get the up direction vector.
      */
     glm::vec3 getUp() const {
-        return quaternion * glm::vec3(0.0f, 1.0f, 0.0f);
+        return quaternion * glm::vec3(0.0f, 0.0f, 1.0f);
     }
     
     /**
@@ -113,15 +120,19 @@ public:
     }
     
     /**
-     * Look at a target position.
+     * Look at a target position: pitch and yaw (no roll) that turn forward (+Y) toward it.
      */
-    void lookAt(const glm::vec3& target, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f)) {
-        glm::vec3 direction = glm::normalize(target - position);
-        if (glm::length(direction) > 0.0001f) {
-            quaternion = glm::quatLookAt(direction, up);
-            updateEulerFromQuaternion();
+    void lookAt(const glm::vec3& target) {
+        const glm::vec3 delta = target - position;
+        const float length = glm::length(delta);
+        if (length > 0.0001f) {
+            const glm::vec3 d = delta / length;
+            const float pitch = glm::degrees(std::asin(glm::clamp(d.z, -1.0f, 1.0f)));
+            const float yaw = glm::degrees(std::atan2(-d.x, d.y));
+            rotation = glm::vec3(pitch, 0.0f, yaw);
+            updateQuaternion();
         }
     }
 };
 
-} // namespace Forge
+} // namespace Propulsion

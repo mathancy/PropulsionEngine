@@ -10,7 +10,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace Forge {
+namespace Propulsion {
 
 void NodeGraph::renderColorWheelContent(ImDrawList* drawList, ColorWheelNode* node, const ImVec2& contentPos, const ImVec2& contentSize) {
     // Color wheel layout:
@@ -509,4 +509,4 @@ void NodeGraph::handleColorWheelInteraction(ColorWheelNode* node, const ImVec2& 
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

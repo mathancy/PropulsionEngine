@@ -1,8 +1,8 @@
-# Forge Engine Build Guide
+# Propulsion MK I Build Guide
 
 ## Complete Build Process
 
-This guide walks you through building Forge Engine from scratch on Windows.
+This guide walks you through building Propulsion MK I from scratch on Windows.
 
 ## Phase 1: Verify Prerequisites
 
@@ -40,7 +40,7 @@ git --version        # Should show git version
 Run the provided setup script:
 
 ```powershell
-cd G:\ForgeEngine
+cd G:\PropulsionMKI
 .\setup.ps1
 ```
 
@@ -71,7 +71,7 @@ When prompted by the script:
 
 5. Extract the ZIP file contents to create this structure:
    ```
-   G:\ForgeEngine\external\glad\
+   G:\PropulsionMKI\external\glad\
    ├── include\
    │   ├── glad\
    │   │   └── glad.h
@@ -120,7 +120,7 @@ cmake ..
 -- The CXX compiler identification is MSVC...
 -- Configuring done
 -- Generating done
--- Build files have been written to: G:/ForgeEngine/build
+-- Build files have been written to: G:/PropulsionMKI/build
 ```
 
 ### Compile the Project
@@ -137,11 +137,11 @@ cmake --build . --config Debug
 
 **Expected Output:**
 ```
-Building Custom Rule G:/ForgeEngine/CMakeLists.txt
+Building Custom Rule G:/PropulsionMKI/CMakeLists.txt
 ...
-Building CXX object CMakeFiles/ForgeEngine.dir/src/main.cpp.obj
+Building CXX object CMakeFiles/PropulsionMKI.dir/src/main.cpp.obj
 ...
-ForgeEngine.vcxproj -> G:\ForgeEngine\build\bin\Release\ForgeEngine.exe
+PropulsionMKI.vcxproj -> G:\PropulsionMKI\build\bin\Release\PropulsionMKI.exe
 ```
 
 ## Phase 4: Run the Engine
@@ -149,20 +149,20 @@ ForgeEngine.vcxproj -> G:\ForgeEngine\build\bin\Release\ForgeEngine.exe
 From build directory:
 
 ```powershell
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 ```
 
 Or from root directory:
 
 ```powershell
-.\build\bin\Release\ForgeEngine.exe
+.\build\bin\Release\PropulsionMKI.exe
 ```
 
 ### First Run Checklist
 
 When the engine starts, you should see:
 
-- ✓ Window titled "Forge Engine" (1280x720)
+- ✓ Window titled "Propulsion MK I" (1280x720)
 - ✓ Menu bar with File, Edit, Window, Help
 - ✓ Viewport panel showing 3D scene
 - ✓ Red cube in the center
@@ -248,7 +248,7 @@ For development with debugging symbols:
 ```powershell
 cd build
 cmake --build . --config Debug
-.\bin\Debug\ForgeEngine.exe
+.\bin\Debug\PropulsionMKI.exe
 ```
 
 ### Clean Build
@@ -288,10 +288,10 @@ After building, you'll have:
 build/
 ├── bin/
 │   └── Release/
-│       └── ForgeEngine.exe    ← Your executable
+│       └── PropulsionMKI.exe    ← Your executable
 ├── lib/                        ← Static libraries
 ├── CMakeFiles/                 ← CMake internals
-└── ForgeEngine.sln            ← Visual Studio solution (if using VS)
+└── PropulsionMKI.sln            ← Visual Studio solution (if using VS)
 ```
 
 ## Rebuilding After Changes
@@ -309,15 +309,15 @@ CMake only recompiles changed files, so subsequent builds are much faster.
 
 **Recommended workflow:**
 
-1. Open `build/ForgeEngine.sln` in Visual Studio (optional)
+1. Open `build/PropulsionMKI.sln` in Visual Studio (optional)
 2. Edit source files in `src/` or `include/`
 3. Rebuild: `cd build; cmake --build . --config Release`
-4. Run: `.\bin\Release\ForgeEngine.exe`
+4. Run: `.\bin\Release\PropulsionMKI.exe`
 5. Repeat
 
 **Or use VS Code:**
 1. Install C/C++ extension
-2. Open ForgeEngine folder
+2. Open PropulsionMKI folder
 3. Edit files
 4. Build with Terminal: `cd build; cmake --build . --config Release`
 

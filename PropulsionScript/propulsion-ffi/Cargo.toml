@@ -1,0 +1,12 @@
+[package]
+name = "propulsion-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C interface to the PropulsionScript interpreter, for hosting scripts inside an engine or editor"
+
+[lib]
+name = "propulsion_ffi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+propulsion = { path = "../propulsion" }

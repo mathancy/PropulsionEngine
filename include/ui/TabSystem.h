@@ -4,7 +4,7 @@
 #include <vector>
 #include <memory>
 
-namespace Forge {
+namespace Propulsion {
 
 // Forward declaration
 class NodeGraph;
@@ -13,8 +13,8 @@ class ScriptGraphEditor;
 enum class TabType {
     Scene,
     AssetEditor,
-    DebugOutput,
-    ScriptGraph   // a ForgeScript file shown as a node graph (assetId holds its path in the project)
+    DebugOutput,  // retired: the Output Log panel replaced it. Kept so the numbers saved in project files don't shift.
+    ScriptGraph   // a PropulsionScript file shown as a node graph (assetId holds its path in the project)
 };
 
 // Preview mesh type for material editor viewport
@@ -62,4 +62,4 @@ struct Tab {
           splitterRatio(0.5f), previewMeshType(PreviewMeshType::Cube), nodeGraph(nullptr) {}
 };
 
-} // namespace Forge
+} // namespace Propulsion

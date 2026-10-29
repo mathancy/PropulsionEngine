@@ -1,9 +1,10 @@
 #include "rendering/SVGRenderer.h"
+#include "core/OutputLog.h"
 #include <fstream>
 #include <sstream>
 #include <iostream>
 
-namespace Forge {
+namespace Propulsion {
 
 SVGRenderer::SVGRenderer() 
     : m_cachedWidth(0), m_cachedHeight(0) {
@@ -31,18 +32,18 @@ bool SVGRenderer::loadFromFile(const std::string& filepath) {
     for (const auto& path : paths) {
         m_document = lunasvg::Document::loadFromFile(path);
         if (m_document) {
-            std::cout << "SVG loaded successfully: " << path << std::endl;
+            OutputLog::print(LogCategory::Render, LogLevel::Info, "SVG loaded successfully: ", path);
             return true;
         }
     }
     
-    std::cerr << "Failed to load SVG: " << filepath << std::endl;
+    OutputLog::print(LogCategory::Render, LogLevel::Error, "Failed to load SVG: ", filepath);
     return false;
 }
 
 void* SVGRenderer::renderToTexture(int width, int height) {
     if (!m_document) {
-        std::cerr << "No SVG document loaded" << std::endl;
+        OutputLog::print(LogCategory::Render, LogLevel::Error, "No SVG document loaded");
         return nullptr;
     }
     
@@ -50,7 +51,7 @@ void* SVGRenderer::renderToTexture(int width, int height) {
     // For now, just validate the SVG can be rendered
     auto bitmap = m_document->renderToBitmap(width, height);
     if (!bitmap.valid()) {
-        std::cerr << "Failed to render SVG to bitmap" << std::endl;
+        OutputLog::print(LogCategory::Render, LogLevel::Error, "Failed to render SVG to bitmap");
         return nullptr;
     }
     
@@ -115,4 +116,4 @@ float SVGRenderer::getHeight() const {
     return 0.0f;
 }
 
-} // namespace Forge
+} // namespace Propulsion

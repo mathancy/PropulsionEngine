@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 
 class VulkanContext;
 
@@ -48,10 +48,26 @@ public:
     
     void setSegmentCount(int segments) { m_segmentCount = segments; }
 
+    // Ray tracing: where the vertex and index data live (zero when the GPU can't do ray queries), and the bottom-level
+    // acceleration structure built from them (see RayTracing.h, which builds it the first time the mesh is traced).
+    VkDeviceAddress getVertexAddress() const { return m_vertexAddress; }
+    VkDeviceAddress getIndexAddress() const { return m_indexAddress; }
+    uint32_t getVertexCount() const { return static_cast<uint32_t>(m_vertices.size()); }
+    VkDeviceAddress getBlasAddress() const { return m_blas.address; }
+    bool hasBlas() const { return m_blas.handle != VK_NULL_HANDLE; }
+    struct Blas {
+        VkAccelerationStructureKHR handle = VK_NULL_HANDLE;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkDeviceAddress address = 0;
+    };
+    void setBlas(const Blas& blas) { destroyBlas(); m_blas = blas; }
+
 private:
     void createVertexBuffer();
     void createIndexBuffer();
     void calculateBounds();
+    void destroyBlas();
 
     VulkanContext* m_context;
     std::vector<Vertex> m_vertices;
@@ -66,6 +82,9 @@ private:
     VkDeviceMemory m_vertexBufferMemory;
     VkBuffer m_indexBuffer;
     VkDeviceMemory m_indexBufferMemory;
+    VkDeviceAddress m_vertexAddress = 0;
+    VkDeviceAddress m_indexAddress = 0;
+    Blas m_blas;
 };
 
-} // namespace Forge
+} // namespace Propulsion

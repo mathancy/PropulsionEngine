@@ -1,0 +1,116 @@
+{
+	"name": "propulsionscript",
+	"displayName": "PropulsionScript",
+	"description": "Syntax highlighting, live error checking, and code intelligence (hover, go to definition, rename, completion) for PropulsionScript (.prop) files.",
+	"version": "0.3.0",
+	"publisher": "propulsion",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.82.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"contributes": {
+		"languages": [
+			{
+				"id": "propulsionscript",
+				"aliases": [
+					"PropulsionScript",
+					"propulsionscript"
+				],
+				"extensions": [
+					".prop"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "propulsionscript",
+				"scopeName": "source.propulsionscript",
+				"path": "./syntaxes/propulsionscript.tmLanguage.json"
+			}
+		],
+		"configurationDefaults": {
+			"editor.tokenColorCustomizations": {
+				"textMateRules": [
+					{
+						"scope": [
+							"comment.line.double-slash.propulsionscript",
+							"comment.line.double-slash.node-marker.propulsionscript"
+						],
+						"settings": {
+							"foreground": "#E5C07B"
+						}
+					}
+				]
+			},
+			"[propulsionscript]": {
+				"editor.insertSpaces": false,
+				"editor.detectIndentation": false,
+				"editor.tabSize": 4,
+				"editor.renderWhitespace": "boundary",
+				"editor.wordBasedSuggestions": "currentDocument",
+				"editor.semanticHighlighting.enabled": true
+			}
+		},
+		"commands": [
+			{
+				"command": "propulsionscript.restartServer",
+				"title": "PropulsionScript: Restart Language Server"
+			}
+		],
+		"configuration": {
+			"title": "PropulsionScript",
+			"properties": {
+				"propulsionscript.serverPath": {
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Full path to the `propulsion-lsp` executable. Leave empty to use `target/release/propulsion-lsp` (or `debug`) in an open workspace folder."
+				}
+			}
+		},
+		"semanticTokenScopes": [
+			{
+				"language": "propulsionscript",
+				"scopes": {
+					"variable": [
+						"variable.other.propulsionscript"
+					],
+					"variable.readonly": [
+						"variable.other.constant.propulsionscript"
+					],
+					"parameter": [
+						"variable.parameter.propulsionscript"
+					],
+					"function": [
+						"entity.name.function.propulsionscript"
+					],
+					"event": [
+						"entity.name.tag.propulsionscript"
+					],
+					"class": [
+						"entity.name.type.class.propulsionscript"
+					],
+					"interface": [
+						"entity.name.type.interface.propulsionscript"
+					],
+					"namespace": [
+						"entity.name.namespace.propulsionscript"
+					],
+					"property": [
+						"variable.other.property.propulsionscript"
+					]
+				}
+			}
+		]
+	},
+	"main": "./extension.js",
+	"activationEvents": [
+		"onLanguage:propulsionscript"
+	],
+	"dependencies": {
+		"vscode-languageclient": "^9.0.1"
+	}
+}

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace Forge {
+namespace Propulsion {
 
 namespace {
 
@@ -438,4 +438,4 @@ bool CodeBuffer::redo() {
     return true;
 }
 
-} // namespace Forge
+} // namespace Propulsion

@@ -2,7 +2,7 @@
 
 #include "NodeTypes.h"
 
-namespace Forge {
+namespace Propulsion {
 
 // Image Node - provides texture sampling output
 struct ImageNode : public Node {
@@ -18,4 +18,4 @@ struct ImageNode : public Node {
     void updateOutputPinType();
 };
 
-} // namespace Forge
+} // namespace Propulsion

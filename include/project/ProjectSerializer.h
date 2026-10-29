@@ -1,11 +1,13 @@
 #pragma once
 
+#include "core/EnvironmentSettings.h"
+
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 // Forward declarations
 struct SceneObject;
@@ -50,6 +52,9 @@ struct ProjectData {
     // UI state
     bool showObjectsPanel;
     bool showContentBrowser;
+
+    // The scene's sky (file version 5 and up; the default sky for older files)
+    EnvironmentSettings environment;
     
     ProjectData() : windowWidth(1280), windowHeight(720), windowMaximized(false),
                    cameraPosition(0.0f), cameraFront(0.0f, 0.0f, -1.0f), cameraUp(0.0f, 1.0f, 0.0f),
@@ -83,4 +88,4 @@ private:
     static time_t readTime(std::ifstream& file);
 };
 
-} // namespace Forge
+} // namespace Propulsion

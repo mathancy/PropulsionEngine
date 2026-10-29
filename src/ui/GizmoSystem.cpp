@@ -15,7 +15,7 @@
 #undef min  // Prevent Windows.h min macro from conflicting with std::min
 #endif
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::renderGizmo(VkCommandBuffer commandBuffer, const glm::mat4& view, const glm::mat4& projection) {
     // Only render for Translate, Rotate, or Scale mode
@@ -1094,4 +1094,4 @@ void Engine::renderRotationFeedbackDisc() {
 }
 
 
-} // namespace Forge
+} // namespace Propulsion

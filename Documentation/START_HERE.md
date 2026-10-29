@@ -1,4 +1,4 @@
-# 🎮 Forge Engine - Complete Project Package
+# 🎮 Propulsion MK I - Complete Project Package
 
 **Status**: ✅ **COMPLETE AND READY**  
 **Version**: 1.0.0 Foundation  
@@ -50,7 +50,7 @@ Total: ~3,500 lines of comprehensive docs
 CMakeLists.txt                 → Build configuration
 setup.ps1                      → Dependency setup script
 .gitignore                     → Git exclusions
-ForgeEngine.code-workspace     → VS Code workspace
+PropulsionMKI.code-workspace     → VS Code workspace
 ```
 
 ### ✅ Dependencies (4 libraries)
@@ -87,7 +87,7 @@ cmake --build . --config Release
 
 ### Step 4: Run (2 min)
 ```powershell
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 ```
 
 **Result**: Engine window with red cube on sky blue background! 🎉
@@ -96,10 +96,10 @@ cmake --build . --config Release
 
 ## 🎮 What It Does
 
-When you run `ForgeEngine.exe`, you get:
+When you run `PropulsionMKI.exe`, you get:
 
 ### Visual
-- 🪟 **1280x720 window** titled "Forge Engine"
+- 🪟 **1280x720 window** titled "Propulsion MK I"
 - 📋 **Menu bar** with File, Edit, Window, Help
 - 🖼️ **Viewport** showing 3D scene
 - 🔴 **Red cube** in center
@@ -144,7 +144,7 @@ When you run `ForgeEngine.exe`, you get:
 
 ### Class Structure
 ```
-Forge::Engine (Main Controller)
+Propulsion::Engine (Main Controller)
   ├── Window    → GLFW wrapper, input handling
   ├── Camera    → View/projection, FPS controls
   ├── Shader    → GLSL compilation & management
@@ -304,15 +304,9 @@ Full guide: **TROUBLESHOOTING.md**
 
 ## 📄 License
 
-**Proprietary Software**  
-Copyright © 2025 Forgeworks Interactive Limited
+MIT License. Copyright © 2025 Forgeworks Interactive Limited.
 
-- ✅ For use by Forgeworks employees/contractors only
-- ✅ For company game development only
-- ❌ No unauthorized distribution
-- ❌ No commercial use outside company
-
-See **LICENSE** for full terms.
+Provided for academic and educational purposes only; it is not a production-ready tool. See [LICENSE](../LICENSE) for the full terms.
 
 ---
 
@@ -436,7 +430,7 @@ You have everything you need:
 
 ## 📬 Final Notes
 
-**Forge Engine** is more than just code—it's a complete, professional game engine foundation built specifically for Forgeworks Interactive Limited. Every file, every function, every line of documentation has been crafted with care to give you the best possible starting point for creating amazing games.
+**Propulsion MK I** is more than just code—it's a complete, professional game engine foundation built specifically for Forgeworks Interactive Limited. Every file, every function, every line of documentation has been crafted with care to give you the best possible starting point for creating amazing games.
 
 **We've built the foundation. Now it's time to build the future.**
 

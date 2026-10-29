@@ -1,6 +1,6 @@
 #include "core/Camera.h"
 
-namespace Forge {
+namespace Propulsion {
 
 Camera::Camera(glm::vec3 position, glm::vec3 up, float yaw, float pitch)
     : m_position(position), m_worldUp(up), m_yaw(yaw), m_pitch(pitch),
@@ -75,6 +75,26 @@ void Camera::processMouseScroll(float yoffset) {
         m_zoom = 45.0f;
 }
 
+void Camera::setView(const glm::vec3& position, const glm::vec3& front, const glm::vec3& up) {
+    if (glm::length(front) < 1e-6f) return;  // no direction to look in: keep the view as it was
+    m_position = position;
+    m_front = glm::normalize(front);
+    glm::vec3 right = glm::cross(m_front, up);
+    if (glm::length(right) < 1e-6f) right = glm::cross(m_front, m_worldUp);  // looking straight along `up`: fall back
+    if (glm::length(right) < 1e-6f) right = glm::vec3(1.0f, 0.0f, 0.0f);
+    m_right = glm::normalize(right);
+    m_up = glm::normalize(glm::cross(m_right, m_front));
+    // The same yaw and pitch the fly camera would have for this direction (Z up): see updateCameraVectors.
+    m_pitch = glm::degrees(std::asin(glm::clamp(m_front.z, -1.0f, 1.0f)));
+    m_yaw = glm::degrees(std::atan2(m_front.y, m_front.x));
+}
+
+void Camera::setProjection(float verticalFovDegrees, float nearPlane, float farPlane) {
+    m_zoom = glm::clamp(verticalFovDegrees, 1.0f, 170.0f);
+    m_nearPlane = nearPlane > 0.0001f ? nearPlane : 0.0001f;
+    m_farPlane = farPlane > m_nearPlane + 0.0001f ? farPlane : m_nearPlane + 0.0001f;
+}
+
 void Camera::updateCameraVectors() {
     // For Z-up coordinate system (Blender-style)
     glm::vec3 front;
@@ -87,4 +107,4 @@ void Camera::updateCameraVectors() {
     m_up = glm::normalize(glm::cross(m_right, m_front));
 }
 
-} // namespace Forge
+} // namespace Propulsion

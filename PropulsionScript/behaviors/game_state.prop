@@ -1,0 +1,19 @@
+// game_state.prop: counts collected coins, shows the score, and announces the win.
+
+header:
+	needs system:UI
+	needs file:"coin.prop" as Coin when:used
+
+	variable name:Score type:integer
+	variable name:Goal type:integer value:3 exposed:true
+
+implement:
+	when Coin sends Collected as Item:
+		add 1 to Score
+
+	// node 1: On Variable Changed [Score]
+	when Score changes:
+		do SetText on UI element:"score" text:"Score: " joined with Score
+		if Score is at least Goal:
+			do Show on UI element:"win"
+			print "You win!"

@@ -3,7 +3,7 @@
 // that edits go through to the file, and that typing into a field and dragging an execution wire
 // really change the script.
 //
-// Build:  cmake --build <build> --target ScriptGraphTest     Run:  ScriptGraphTest.exe <ForgeScript folder>
+// Build:  cmake --build <build> --target ScriptGraphTest     Run:  ScriptGraphTest.exe <PropulsionScript folder>
 
 #include <algorithm>
 #include <cmath>
@@ -19,7 +19,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-using namespace Forge;
+using namespace Propulsion;
 namespace fs = std::filesystem;
 
 static int fails = 0;
@@ -263,11 +263,11 @@ static bool overlap(const Rect& a, const Rect& b) {
 }
 
 static std::string copyTree(const fs::path& from, const std::string& name) {
-    fs::path to = fs::temp_directory_path() / ("forge_graph_ui_" + name);
+    fs::path to = fs::temp_directory_path() / ("propulsion_graph_ui_" + name);
     fs::remove_all(to);
     fs::create_directories(to);
     for (const auto& e : fs::recursive_directory_iterator(from)) {
-        if (e.is_regular_file() && e.path().extension() == ".forge") {
+        if (e.is_regular_file() && e.path().extension() == ".prop") {
             fs::path rel = fs::relative(e.path(), from);
             fs::create_directories((to / rel).parent_path());
             fs::copy_file(e.path(), to / rel, fs::copy_options::overwrite_existing);
@@ -276,12 +276,12 @@ static std::string copyTree(const fs::path& from, const std::string& name) {
     return to.string();
 }
 
-static void everyRealScriptLaysOutWithoutOverlap(const fs::path& forgeScript) {
+static void everyRealScriptLaysOutWithoutOverlap(const fs::path& propulsionScript) {
     int scripts = 0;
     for (const char* dir : {"examples", "behaviors"}) {
-        std::string tree = copyTree(forgeScript / dir, dir);
+        std::string tree = copyTree(propulsionScript / dir, dir);
         for (const auto& e : fs::recursive_directory_iterator(tree)) {
-            if (!e.is_regular_file() || e.path().extension() != ".forge") continue;
+            if (!e.is_regular_file() || e.path().extension() != ".prop") continue;
             std::string label = e.path().filename().string();
             ScriptGraphEditor editor(e.path().generic_string(), nullptr);
             frame(editor, 3);
@@ -318,11 +318,11 @@ static void everyRealScriptLaysOutWithoutOverlap(const fs::path& forgeScript) {
 // ---- editing ----
 
 static const char* kSpinner =
-    "// spinner.forge\n\nheader:\n\tneeds component:Transform\n\n\tvariable name:Speed type:decimal value:45.0\n\nimplement:\n"
+    "// spinner.prop\n\nheader:\n\tneeds component:Transform\n\n\tvariable name:Speed type:decimal value:45.0\n\nimplement:\n"
     "\tevery frame:\n\t\tadd Speed per second to Transform.Rot.Y\n\t\tprint \"spinning\"\n";
 
 static void editsGoThroughToTheFile() {
-    fs::path file = fs::temp_directory_path() / "forge_graph_ui_edit" / "spinner.forge";
+    fs::path file = fs::temp_directory_path() / "propulsion_graph_ui_edit" / "spinner.prop";
     fs::remove_all(file.parent_path());
     writeFile(file, kSpinner);
     ScriptGraphEditor editor(file.generic_string(), nullptr);
@@ -362,7 +362,7 @@ static void editsGoThroughToTheFile() {
 // ---- gestures ----
 
 static void typingIntoAFieldEditsTheScript() {
-    fs::path file = fs::temp_directory_path() / "forge_graph_ui_type" / "spinner.forge";
+    fs::path file = fs::temp_directory_path() / "propulsion_graph_ui_type" / "spinner.prop";
     fs::remove_all(file.parent_path());
     writeFile(file, kSpinner);
     ScriptGraphEditor editor(file.generic_string(), nullptr);
@@ -391,7 +391,7 @@ static void typingIntoAFieldEditsTheScript() {
     frame(editor, 3);
 
     CHECK(readFile(file).find("to Transform.Rot.X") != std::string::npos, "typing in the Target field rewrote the sentence");
-    CHECK(readFile(file).find("// spinner.forge") != std::string::npos, "and kept the comment");
+    CHECK(readFile(file).find("// spinner.prop") != std::string::npos, "and kept the comment");
     const ScriptNode* after = findNode(editor, "Rotate Object");
     CHECK(after && after->fields[0].text == "Transform.Rot.X", "the field shows the new text");
 
@@ -422,7 +422,7 @@ static void typingIntoAFieldEditsTheScript() {
 }
 
 static void draggingAnExecutionWireReordersTheScript() {
-    fs::path file = fs::temp_directory_path() / "forge_graph_ui_wire" / "three.forge";
+    fs::path file = fs::temp_directory_path() / "propulsion_graph_ui_wire" / "three.prop";
     fs::remove_all(file.parent_path());
     writeFile(file,
               "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"one\"\n\t\tprint \"two\"\n\t\tprint \"three\"\n");
@@ -495,7 +495,7 @@ static bool isSelected(const ScriptGraphEditor& editor, const ScriptNode* n) {
 }
 
 static std::string freshScript(const char* name, const char* text) {
-    fs::path file = fs::temp_directory_path() / (std::string("forge_graph_ui_") + name) / "s.forge";
+    fs::path file = fs::temp_directory_path() / (std::string("propulsion_graph_ui_") + name) / "s.prop";
     fs::remove_all(file.parent_path());
     writeFile(file, text);
     return file.generic_string();
@@ -992,6 +992,236 @@ static void aListDraggedOntoForEachIsPluggedIn() {
     CHECK(readFile(file).find("in unset:") != std::string::npos, "that undoes");
 }
 
+static void remembersAreListedAsLocalVariablesUnderTheVariables() {
+    std::string file = freshScript("locals",
+        "header:\n\tneeds component:Transform\n\tneeds system:Input\n\n\tvariable name:Speed type:decimal value:2.0\n\nimplement:\n"
+        "\tevery frame:\n\t\tremember Forward axis moveForward of Input\n\t\tremember Step Forward times Speed\n"
+        "\n\twhen created:\n\t\tremember Label \"hello\"\n\t\tprint \"x\"\n");
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+
+    // They are not header variables, but they are listed, with their types, in script order.
+    CHECK(editor.variables().size() == 1 && editor.variables()[0].name == "Speed", "only Speed is declared in the header");
+    CHECK(editor.locals().size() == 3, "three Set Local nodes");
+    if (editor.locals().size() != 3) return;
+    CHECK(editor.locals()[0].name == "Forward" && editor.locals()[0].type == "decimal" && editor.locals()[0].scope == "every frame", "Forward: a decimal, in every frame");
+    CHECK(editor.locals()[1].name == "Step" && editor.locals()[1].type == "decimal", "then Step");
+    CHECK(editor.locals()[2].name == "Label" && editor.locals()[2].type == "text" && editor.locals()[2].scope == "when created", "Label: text, in when created");
+
+    // The sub-section is drawn under the variables, and each local has a row there (and the variable's row is above them).
+    CHECK(editor.localsHeader().y > editor.variableRow("Speed").y, "the Local Variables heading is under the variables");
+    CHECK(editor.localRow("Forward").y > editor.localsHeader().y, "and the rows under the heading");
+    CHECK(editor.localRow("Label").y > editor.localRow("Step").y, "in script order");
+    CHECK(editor.localRow("Speed").x == 0, "a header variable is not among them");
+
+    // Clicking a local finds the node that makes it.
+    click(editor, editor.localRow("Label"));
+    frame(editor, 3);
+    CHECK(findNode(editor, "Set Local") != nullptr, "there are Set Local nodes");
+    CHECK(editor.selectedNodeKey() == editor.locals()[2].node, "clicking Label selected the node that makes it");
+
+    // Dragged onto a node's field, it is used there, like a variable.
+    const ScriptNode* print = findNode(editor, "Print Debug Message");
+    CHECK(print != nullptr, "the Print node is there");
+    if (print) {
+        dragAndDrop(editor, editor.localRow("Label"), fieldOf(editor, *print, 1));
+        CHECK(readFile(file).find("print Label") != std::string::npos, "dropping Label on the message printed it");
+    }
+
+    // Deleting the node that makes one takes it off the list; the others stay.
+    CHECK(editor.edit("delete", editor.locals()[2].node), "the Set Local node can be deleted");
+    frame(editor, 3);
+    CHECK(editor.locals().size() == 2 && editor.localRow("Label").x == 0, "Label is gone from the list");
+
+    // A script with none says so, and the heading is still there.
+    std::string plain = freshScript("nolocals", "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"hi\"\n");
+    ScriptGraphEditor empty(plain, nullptr);
+    frame(empty, 4);
+    CHECK(empty.locals().empty() && empty.localsHeader().y > 0, "no locals, but the Local Variables heading is drawn");
+}
+
+// ---- where generated nodes go: left to right, then down, like a page ----
+
+static const ScriptNode* nodeKeyed(const ScriptGraphEditor& editor, const std::string& key) {
+    for (const auto& n : editor.graph().getNodes()) {
+        const ScriptNode* s = dynamic_cast<const ScriptNode*>(n.get());
+        if (s && s->key == key) return s;
+    }
+    return nullptr;
+}
+
+static float rightOf(const ScriptNode& n) { return n.position.x + n.size.x; }
+static float bottomOf(const ScriptNode& n) { return n.position.y + 1.5f + static_cast<float>((std::max)(n.inputs.size(), n.outputs.size())); }
+
+/// A script whose one handler prints `count` times: nodes h0 (the event), then h0.0.0 ... h0.0.<count-1>.
+static std::string printsScript(int count) {
+    std::string text = "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n";
+    for (int i = 0; i < count; i++) text += "\t\tprint \"p" + std::to_string(i) + "\"\n";
+    return text;
+}
+
+static std::string statementKey(int index) { return "h0.0." + std::to_string(index); }
+
+/// The lowest point of any node in the graph.
+static float lowestPoint(const ScriptGraphEditor& editor) {
+    float low = 0.0f;
+    for (const auto& n : editor.graph().getNodes()) {
+        if (const ScriptNode* s = dynamic_cast<const ScriptNode*>(n.get())) low = (std::max)(low, bottomOf(*s));
+    }
+    return low;
+}
+
+static void generatedNodesRunLeftToRightWithTwoSquaresBetween() {
+    std::string file = freshScript("l2r", printsScript(4).c_str());
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 3);
+
+    // Each node follows the one before it on the same line: its header in line, exactly two squares of space between.
+    const ScriptNode* prev = nodeKeyed(editor, "h0");
+    CHECK(prev != nullptr, "the event is there");
+    for (int i = 0; prev && i < 4; i++) {
+        const ScriptNode* n = nodeKeyed(editor, statementKey(i));
+        CHECK(n != nullptr, "the statement is there");
+        if (!n) return;
+        CHECK(n->position.y == prev->position.y, "the header bars are in line");
+        CHECK(n->position.x == rightOf(*prev) + 2.0f, "two grid squares between each node and the next");
+        prev = n;
+    }
+}
+
+static void aNodeAddedBetweenTwoBumpsTheRestToTheRight() {
+    std::string file = freshScript("between", printsScript(3).c_str());
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 3);
+    editor.commitLayout();  // the nodes have places of their own now, like a graph someone has been working in
+    frame(editor, 2);
+    const ScriptNode* a = nodeKeyed(editor, statementKey(0));
+    const ScriptNode* b = nodeKeyed(editor, statementKey(1));
+    const ScriptNode* c = nodeKeyed(editor, statementKey(2));
+    if (!a || !b || !c) return;
+    const float ax = a->position.x, bx = b->position.x, cx = c->position.x, y = a->position.y;
+
+    CHECK(editor.edit("add", "Finish", "h0", "0", "1"), "a node is added between the first and second");
+    frame(editor, 3);
+    const ScriptNode* before = nodeKeyed(editor, statementKey(0));
+    const ScriptNode* added = nodeKeyed(editor, statementKey(1));
+    const ScriptNode* nb = nodeKeyed(editor, statementKey(2));
+    const ScriptNode* nc = nodeKeyed(editor, statementKey(3));
+    CHECK(before && added && nb && nc && added->name == "Finish", "the new node is second, and the others follow it");
+    if (!before || !added || !nb || !nc) return;
+    CHECK(before->position.x == ax && before->position.y == y, "the node before it stays where it was");
+    CHECK(added->position.x == rightOf(*before) + 2.0f && added->position.y == y, "it slots in right after, on the same line, two squares away");
+    const float shift = added->size.x + 2.0f;
+    CHECK(nb->position.x == bx + shift && nb->position.x == rightOf(*added) + 2.0f, "the node that was second moved right by exactly the room the new one needs");
+    CHECK(nc->position.x == cx + shift, "and so did the one after it");
+    CHECK(nb->position.y == y && nc->position.y == y, "all on the same line still");
+}
+
+static void aNodeAddedAtTheEndGoesAfterTheLastOne() {
+    std::string file = freshScript("append", printsScript(3).c_str());
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 3);
+    editor.commitLayout();
+    frame(editor, 2);
+    const ScriptNode* last = nodeKeyed(editor, statementKey(2));
+    if (!last) return;
+    const float lastX = last->position.x, y = last->position.y, edge = rightOf(*last);
+
+    CHECK(editor.edit("add", "Finish", "h0", "0", "3"), "a node is added at the end");
+    frame(editor, 3);
+    const ScriptNode* added = nodeKeyed(editor, statementKey(3));
+    last = nodeKeyed(editor, statementKey(2));
+    CHECK(added && last && added->name == "Finish", "it is the new last statement");
+    if (!added || !last) return;
+    CHECK(last->position.x == lastX, "nothing before it moved");
+    CHECK(added->position.x == edge + 2.0f && added->position.y == y, "it is two squares to the right of the old last node, on its line");
+}
+
+static void aLongScriptBreaksTheLineAfterTenNodesAndReadsLikeABook() {
+    // The event and nine statements fill the first line; the tenth statement (the 11th node) starts the second.
+    std::string file = freshScript("book", printsScript(12).c_str());
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 3);
+    const ScriptNode* first = nodeKeyed(editor, "h0");
+    if (!first) return;
+    int onFirstLine = 0;
+    float lowestOnFirstLine = 0.0f;
+    for (const auto& n : editor.graph().getNodes()) {
+        const ScriptNode* s = dynamic_cast<const ScriptNode*>(n.get());
+        if (s && s->position.y == first->position.y) {
+            onFirstLine++;
+            lowestOnFirstLine = (std::max)(lowestOnFirstLine, bottomOf(*s));
+        }
+    }
+    CHECK(onFirstLine == 10, "ten nodes on the first line");
+
+    const ScriptNode* eleventh = nodeKeyed(editor, statementKey(9));
+    const ScriptNode* twelfth = nodeKeyed(editor, statementKey(10));
+    const ScriptNode* thirteenth = nodeKeyed(editor, statementKey(11));
+    CHECK(eleventh && twelfth && thirteenth, "all the nodes are there");
+    if (!eleventh || !twelfth || !thirteenth) return;
+    CHECK(eleventh->position.x == first->position.x, "the 11th node is lined up with the first node");
+    const float gap = eleventh->position.y - lowestOnFirstLine;
+    CHECK(gap >= 2.0f && gap < 3.0f, "and two grid squares below the lowest node (rounded to the grid)");
+    CHECK(twelfth->position.y == eleventh->position.y && twelfth->position.x == rightOf(*eleventh) + 2.0f, "the line goes on from there, two squares apart");
+    CHECK(thirteenth->position.y == eleventh->position.y, "on the same line");
+}
+
+static void aNodeAddedToAFullLineStartsTheNextOne() {
+    std::string file = freshScript("fullline", printsScript(9).c_str());  // the event and nine statements: a full line
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 3);
+    editor.commitLayout();
+    frame(editor, 2);
+    const ScriptNode* first = nodeKeyed(editor, "h0");
+    const ScriptNode* last = nodeKeyed(editor, statementKey(8));
+    if (!first || !last) return;
+    const float firstX = first->position.x, lastY = last->position.y;
+    const float low = lowestPoint(editor);
+
+    CHECK(editor.edit("add", "Finish", "h0", "0", "9"), "an 11th node is added at the end");
+    frame(editor, 3);
+    const ScriptNode* added = nodeKeyed(editor, statementKey(9));
+    CHECK(added && added->name == "Finish", "it is the new last statement");
+    if (!added) return;
+    CHECK(added->position.x == firstX, "it starts a new line, at the left, in line with the first node");
+    CHECK(added->position.y - low >= 2.0f && added->position.y - low < 3.0f && added->position.y > lastY, "two squares below the lowest node");
+
+    // A node put in the middle of a full line does not break it: it makes room.
+    std::string file2 = freshScript("fullline2", printsScript(9).c_str());
+    ScriptGraphEditor middle(file2, nullptr);
+    frame(middle, 3);
+    middle.commitLayout();
+    frame(middle, 2);
+    const ScriptNode* a = nodeKeyed(middle, statementKey(3));
+    if (!a) return;
+    const float y = a->position.y;
+    CHECK(middle.edit("add", "Finish", "h0", "0", "4"), "a node is added in the middle of the full line");
+    frame(middle, 3);
+    const ScriptNode* in = nodeKeyed(middle, statementKey(4));
+    const ScriptNode* end = nodeKeyed(middle, statementKey(9));
+    CHECK(in && end && in->position.y == y && end->position.y == y, "it stays on the line, and the line gets longer");
+}
+
+static void aSecondHandlerStartsBelowEverythingAtTheLeft() {
+    std::string file = freshScript("handlers", "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"a\"\n\t\tprint \"b\"\n\n\tevery frame:\n\t\tprint \"c\"\n");
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 3);
+    const ScriptNode* first = nodeKeyed(editor, "h0");
+    const ScriptNode* second = nodeKeyed(editor, "h1");
+    const ScriptNode* body = nodeKeyed(editor, "h1.0.0");
+    CHECK(first && second && body, "both handlers are there");
+    if (!first || !second || !body) return;
+    CHECK(second->position.x == first->position.x, "the second handler is lined up with the first");
+    float low = 0.0f;
+    for (int i = 0; i < 2; i++) {
+        if (const ScriptNode* n = nodeKeyed(editor, statementKey(i))) low = (std::max)(low, bottomOf(*n));
+    }
+    low = (std::max)(low, bottomOf(*first));
+    CHECK(second->position.y - low >= 2.0f && second->position.y - low < 3.0f, "two squares below the lowest node of the first");
+    CHECK(body->position.y == second->position.y && body->position.x == rightOf(*second) + 2.0f, "its statement follows it on its own line");
+}
+
 static ImGuiWindow* popupWindow(const char* part);
 static ImVec2 popupRow(ImGuiWindow* w, int index, int count);
 static void rightClick(ScriptGraphEditor& editor, ImVec2 p);
@@ -1058,6 +1288,8 @@ static void aWiredGetNodeCanBeWiredIntoAnotherPin() {
     }
 
     // Cutting one wire (the pin's menu: Delete connection) unplugs only that pin; the node and the other wire stay.
+    editor.requestFit();  // the nodes now run left to right, so they are wider than the window: zoom out to see them all
+    frame(editor, 3);
     rightClick(editor, pinScreen(editor, *add, 2, false));
     ImGuiWindow* menu = popupWindow("##Popup_");
     CHECK(menu != nullptr, "right-clicking the wired pin opens its menu");
@@ -1085,7 +1317,7 @@ static void aWiredGetNodeCanBeWiredIntoAnotherPin() {
 }
 
 static void aVariableDroppedOnTheCanvasBecomesAGetNodeToWireIn(float scale = 1.0f) {
-    ForgeEngine::UI::setUIScale(scale);
+    PropulsionMKI::UI::setUIScale(scale);
     std::string file = freshScript("getnode", kForEachScript);
     ScriptGraphEditor editor(file, nullptr);
     frame(editor, 4);
@@ -1148,7 +1380,7 @@ static void aVariableDroppedOnTheCanvasBecomesAGetNodeToWireIn(float scale = 1.0
         frame(editor, 3);
         CHECK(findNode(editor, "Get Targets") != nullptr && readFile(file).find("in Targets:") != std::string::npos, "which brings it back");
     }
-    ForgeEngine::UI::setUIScale(1.0f);
+    PropulsionMKI::UI::setUIScale(1.0f);
 }
 
 /// Drop a Get node for `variable` on empty canvas, pull its output pin out and let go over empty canvas: the let-go menu.
@@ -1170,7 +1402,7 @@ static ImGuiWindow* openLastRow(ScriptGraphEditor& editor, ImGuiWindow* menu) {
 }
 
 static void aGetNodeWireLetGoOnEmptyCanvasOffersTheNewNodesThatTakeIt(float scale = 1.0f) {
-    ForgeEngine::UI::setUIScale(scale);
+    PropulsionMKI::UI::setUIScale(scale);
     std::string file = freshScript("getdrop", kForEachScript);
     ScriptGraphEditor editor(file, nullptr);
     frame(editor, 4);
@@ -1198,7 +1430,7 @@ static void aGetNodeWireLetGoOnEmptyCanvasOffersTheNewNodesThatTakeIt(float scal
     CHECK(editor.undo(), "all of it is one undo step");
     frame(editor, 3);
     CHECK(findNode(editor, "For Each") == nullptr && readFile(file) == before, "which takes the node away again");
-    ForgeEngine::UI::setUIScale(1.0f);
+    PropulsionMKI::UI::setUIScale(1.0f);
 }
 
 static void aBooleanGetNodeCanBeDraggedIntoANewBranch() {
@@ -1218,13 +1450,56 @@ static void aBooleanGetNodeCanBeDraggedIntoANewBranch() {
     CHECK(readFile(file).find("if Alive is true:") != std::string::npos, "a Branch is added, asking whether the boolean is true");
     const ScriptNode* branch = findNode(editor, "Branch");
     CHECK(branch != nullptr, "it is in the graph");
-    CHECK(findNode(editor, "Get Alive") == nullptr, "and the Get node became the comparison, so it is gone");
-    CHECK(branch && !branch->fields.empty() && !branch->fields[0].wiredKey.empty(), "which feeds the Branch's Condition");
+    const ScriptNode* get = findNode(editor, "Get Alive");
+    CHECK(get != nullptr && findNode(editor, "Compare") == nullptr, "the Get node stays as the variable itself, with no comparison node");
+    CHECK(branch && get && !branch->fields.empty() && branch->fields[0].wiredKey == get->key, "wired straight into the Branch's Condition");
+    CHECK(branch && branch->execLabels == std::vector<std::string>({"True", "False", "Next"}), "a Branch has True and False outputs");
+    CHECK(branch && branch->execTargets[0].empty() && branch->execTargets[1].empty(), "and nothing under it");
     CHECK(editor.message().empty(), "with nothing refused");
 }
 
+
+static const char* kBoolScript =
+    "header:\n\tneeds component:Transform\n\n\tvariable name:Alive type:boolean value:true\n\nimplement:\n\twhen created:\n\t\tprint \"hi\"\n";
+
+static void aBranchComesAloneAndABooleanPlugsStraightIntoIt() {
+    std::string file = freshScript("branchsolo", kBoolScript);
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+    const size_t nodesBefore = editor.graph().getNodes().size();
+    CHECK(editor.edit("add", "Branch", "h0", "0", "1"), "a Branch is added");
+    frame(editor, 3);
+    CHECK(editor.graph().getNodes().size() == nodesBefore + 1, "and only the Branch appears: no compare node, nothing under it");
+    const ScriptNode* branch = findNode(editor, "Branch");
+    CHECK(branch && branch->execLabels == std::vector<std::string>({"True", "False", "Next"}), "with True and False outputs");
+    CHECK(branch && branch->fields.size() == 1 && branch->fields[0].text == "unset", "its condition is not plugged in");
+    if (!branch) return;
+
+    // A Get node for the boolean, dragged onto the Condition.
+    editor.addGetter("Alive", ImVec2(branch->position.x - 16.0f, branch->position.y));
+    frame(editor, 3);
+    const ScriptNode* getter = findNode(editor, "Get Alive");
+    CHECK(getter != nullptr, "a Get node is on the canvas");
+    if (!getter) return;
+    const ImVec2 from = pinScreen(editor, *getter, 0, true);
+    const ImVec2 to = pinScreen(editor, *branch, 1, false);
+    mouseTo(editor, from);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frame(editor, 2);
+    mouseTo(editor, ImVec2((from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f), 2);
+    mouseTo(editor, to, 2);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frame(editor, 4);
+    CHECK(readFile(file).find("if Alive is true:") != std::string::npos, "the Branch asks whether Alive is true");
+    CHECK(editor.message().empty(), "without complaint");
+    branch = findNode(editor, "Branch");
+    const ScriptNode* wired = findNode(editor, "Get Alive");
+    CHECK(branch && wired && branch->fields[0].wiredKey == wired->key && findNode(editor, "Compare") == nullptr, "the variable is wired straight in, with no compare node");
+    CHECK(branch && branch->error.empty(), "and the Branch has nothing wrong with it");
+}
+
 static void aSetVariableOnABooleanHasACheckbox(float scale = 1.0f) {
-    ForgeEngine::UI::setUIScale(scale);
+    PropulsionMKI::UI::setUIScale(scale);
     std::string file = freshScript("setbool", "header:\n\tneeds component:Transform\n\n\tvariable name:Alive type:boolean value:true\n\tvariable name:Score type:integer value:0\n\nimplement:\n\twhen created:\n\t\tprint \"hi\"\n");
     ScriptGraphEditor editor(file, nullptr);
     frame(editor, 4);
@@ -1249,7 +1524,7 @@ static void aSetVariableOnABooleanHasACheckbox(float scale = 1.0f) {
     CHECK(set && set->fields[1].toggle && set->fields[1].text == "true", "and it stays a checkbox, ticked");
     click(editor, box);
     CHECK(readFile(file).find("make Alive false") != std::string::npos, "clicking it again makes it false");
-    ForgeEngine::UI::setUIScale(1.0f);
+    PropulsionMKI::UI::setUIScale(1.0f);
 }
 
 static void compileListsWhatWouldFailAtPlay() {
@@ -1621,7 +1896,7 @@ static void theCodePaneEditsTheScript() {
 
     // Text that does not parse is marked where it stops, and is not saved.
     click(editor, editor.codeCharPos(8, 0));
-    typeText(editor, "  ");  // spaces in the indent: ForgeScript wants tabs
+    typeText(editor, "  ");  // spaces in the indent: PropulsionScript wants tabs
     frame(editor, 45);
     CHECK(editor.codeDirty(), "it stays unsaved");
     CHECK(editor.codeError() != nullptr && editor.codeError()->line == 8, "the error is on the line with the spaces");
@@ -1826,7 +2101,7 @@ static std::vector<ScriptGraphEditor::ComponentInfo> sampleComponents() {
     material.parent = "Mesh";
     material.detail = "Brick";
     material.note = "The material on the mesh.";
-    material.details = {{"Asset", "Brick"}, {"File", "Assets/Materials/Brick.fmat"}};
+    material.details = {{"Asset", "Brick"}, {"File", "Assets/Materials/Brick.pmat"}};
     material.swatch = IM_COL32(170, 80, 60, 255);
     ScriptGraphEditor::ComponentInfo transform;
     transform.name = "Transform";
@@ -1845,6 +2120,83 @@ static void aMeshHasItsMaterialAndTransformUnderIt() {
     CHECK(editor.graph().getNodes().size() > 0, "the editor draws with a component tree");
     // Transform is not a component of the Object on its own: the script needing it does not put it in the tree.
     CHECK(readFile(file).find("needs component:Transform") != std::string::npos, "the script still needs Transform");
+}
+
+/// A component the host supplies an editor for: the editor's widgets are drawn in the details panel when it is selected.
+/// `drawn` counts frames the editor ran; `button` is where its button was, so a test can click it; `clicks` counts presses.
+struct EditorProbe {
+    int drawn = 0;
+    int clicks = 0;
+    ImVec2 button{-1, -1};
+    std::function<void()> editor() {
+        return [this]() {
+            drawn++;
+            if (ImGui::Button("Do It")) clicks++;
+            button = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f,
+                            (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
+        };
+    }
+};
+
+static void aComponentsEditorShowsInTheDetailsPanelWhenSelected() {
+    std::string file = freshScript("compeditor", kForEachScript);
+    ScriptGraphEditor editor(file, nullptr);
+    EditorProbe meshProbe, cameraProbe;
+    int addComponentDrawn = 0;
+
+    auto components = sampleComponents();
+    components[0].editor = meshProbe.editor();   // Mesh
+    ScriptGraphEditor::ComponentInfo camera;
+    camera.name = "Camera";
+    camera.detail = "FOV 90";
+    camera.details = {{"Read only", "row"}};
+    camera.editor = cameraProbe.editor();
+    components.push_back(camera);
+    editor.setObject("Door", components, 1, {}, [&]() { addComponentDrawn++; });
+
+    frame(editor, 3);
+    CHECK(addComponentDrawn > 0, "the + Add Component control is drawn under the list");
+    CHECK(meshProbe.drawn == 0 && cameraProbe.drawn == 0, "no editor runs until its component is selected");
+
+    editor.selectComponent("Mesh");
+    frame(editor, 3);
+    CHECK(meshProbe.drawn > 0, "selecting the Mesh draws its editor in the details panel");
+    CHECK(cameraProbe.drawn == 0, "and only that one");
+
+    // The widgets in the details panel are live: a click on the editor's button reaches the host.
+    CHECK(meshProbe.button.x > 0, "the editor's button was drawn on screen");
+    click(editor, meshProbe.button);
+    CHECK(meshProbe.clicks == 1, "clicking it runs the host's code once");
+
+    meshProbe.drawn = 0;
+    editor.selectComponent("Camera");
+    frame(editor, 3);
+    CHECK(cameraProbe.drawn > 0 && meshProbe.drawn == 0, "selecting another component swaps the editor");
+
+    // A component with no editor still shows its read-only rows.
+    editor.selectComponent("Material");
+    frame(editor, 3);
+}
+
+static void theObjectsOwnEditorShowsWhenTheObjectIsSelected() {
+    std::string file = freshScript("objeditor", kForEachScript);
+    ScriptGraphEditor editor(file, nullptr);
+    EditorProbe objectProbe;
+    editor.setObject("Door", sampleComponents(), 1, objectProbe.editor());
+    frame(editor, 3);
+    CHECK(objectProbe.drawn == 0, "not drawn while nothing is selected");
+
+    editor.selectComponent("@object");
+    frame(editor, 3);
+    CHECK(objectProbe.drawn > 0, "selecting the Object draws its editor (its script)");
+    click(editor, objectProbe.button);
+    CHECK(objectProbe.clicks == 1, "and it is live");
+
+    // Without an editor the details panel falls back to naming the script.
+    ScriptGraphEditor plain(file, nullptr);
+    plain.setObject("Door", sampleComponents(), 1);
+    plain.selectComponent("@object");
+    frame(plain, 3);
 }
 
 static void changingAVariablesTypeResetsItsValue() {
@@ -1906,7 +2258,7 @@ static const ScriptNode* getNodeFor(const ScriptGraphEditor& editor, const std::
 }
 
 static void aWireInAScriptGraphCanBeCutFromItsMenu(float scale) {
-    ForgeEngine::UI::setUIScale(scale);
+    PropulsionMKI::UI::setUIScale(scale);
     std::string file = freshScript("cutwire", kForEachScript);
     ScriptGraphEditor editor(file, nullptr);
     frame(editor, 4);
@@ -1923,7 +2275,7 @@ static void aWireInAScriptGraphCanBeCutFromItsMenu(float scale) {
     // An execution wire can't be cut: its menu item is there, greyed out, and does nothing.
     const std::string before = readFile(file);
     const float runX = (event->position.x + event->size.x + eachX) * 0.5f;
-    rightClick(editor, gridScreen(editor, runX, eachY + 1.5f));
+    rightClick(editor, gridScreen(editor, runX, eachY + 2.0f));  // the execution pins are on the first row, so the wire runs straight across
     ImGuiWindow* menu = popupWindow("##Popup_");
     CHECK(menu != nullptr, "right-clicking an execution wire opens a menu");
     if (menu) click(editor, popupRow(menu, 0, 1));
@@ -1959,11 +2311,11 @@ static void aWireInAScriptGraphCanBeCutFromItsMenu(float scale) {
         click(editor, ImVec2(menu->Pos.x + menu->Size.x * 0.5f, menu->Pos.y + menu->Size.y - menu->WindowPadding.y - ImGui::GetTextLineHeight() * 0.5f - 1.0f));
         CHECK(readFile(file).find("in unset:") != std::string::npos, "Delete connection on the pin cuts it too");
     }
-    ForgeEngine::UI::setUIScale(1.0f);
+    PropulsionMKI::UI::setUIScale(1.0f);
 }
 
 static void aDropdownsTextFollowsTheZoom() {
-    ForgeEngine::UI::setUIScale(1.5f);
+    PropulsionMKI::UI::setUIScale(1.5f);
     std::string file = freshScript("dropzoom", kPickScript);
     ScriptGraphEditor editor(file, nullptr);
     frame(editor, 4);
@@ -1988,11 +2340,11 @@ static void aDropdownsTextFollowsTheZoom() {
         ImGui::GetIO().AddMouseWheelEvent(0, -1.0f);
         frame(editor, 3);
     }
-    ForgeEngine::UI::setUIScale(1.0f);
+    PropulsionMKI::UI::setUIScale(1.0f);
 }
 
 static void aTooltipFollowsTheUiScaleAndHasRoomAtTheSides(float scale) {
-    ForgeEngine::UI::setUIScale(scale);
+    PropulsionMKI::UI::setUIScale(scale);
     std::string file = freshScript("tooltip", kPickScript);
     ScriptGraphEditor editor(file, nullptr);
     frame(editor, 4);
@@ -2010,7 +2362,7 @@ static void aTooltipFollowsTheUiScaleAndHasRoomAtTheSides(float scale) {
         CHECK(std::abs(tip->FontWindowScale - scale) < 0.01f, "the tooltip's text is at the UI scale");
         CHECK(tip->WindowPadding.x >= ImGui::GetStyle().WindowPadding.x + 5.0f * scale && tip->WindowPadding.y >= ImGui::GetStyle().WindowPadding.y, "with more room at its sides than the window padding");
     }
-    ForgeEngine::UI::setUIScale(1.0f);
+    PropulsionMKI::UI::setUIScale(1.0f);
 }
 
 static void aSwitchGrowsCasesThatShowUpAsOutputsAndFields() {
@@ -2104,12 +2456,12 @@ static void aVariablePinIsADropdownOfWhatFitsIt() {
 
 static void theReferencesPanelAddsEntitiesAndScripts() {
     std::string file = freshScript("refs", kPickScript);
-    writeFile(fs::path(file).parent_path() / "coin.forge", "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"coin\"\n");
+    writeFile(fs::path(file).parent_path() / "coin.prop", "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"coin\"\n");
     ScriptGraphEditor editor(file, nullptr);
     editor.setObject("Door", sampleComponents(), 1);
     frame(editor, 4);
     CHECK(editor.references().size() == 1 && editor.references()[0].name == "Foes" && editor.references()[0].kind == "entities", "the header's reference is listed");
-    CHECK(editor.scriptChoices() == std::vector<std::string>({"coin.forge"}), "the other script beside it is offered, not itself");
+    CHECK(editor.scriptChoices() == std::vector<std::string>({"coin.prop"}), "the other script beside it is offered, not itself");
     CHECK(editor.addReferenceButton().x > 0, "the + Reference button is drawn");
 
     // The + Reference menu: its first item is Entity.
@@ -2121,14 +2473,14 @@ static void theReferencesPanelAddsEntitiesAndScripts() {
         CHECK(editor.references().size() == 2 && editor.references()[1].name == "Entity" && editor.references()[1].kind == "entity", "choosing Entity declared one");
     }
     const std::string text = readFile(file);
-    CHECK(text.find("needs entity:Entity file:\"coin.forge\" tag:\"entity\"") != std::string::npos, "naming the other script it can run");
+    CHECK(text.find("needs entity:Entity file:\"coin.prop\" tag:\"entity\"") != std::string::npos, "naming the other script it can run");
     CHECK(text.find("needs entity:Entity") < text.find("variable name:Targets"), "in the header, with the other needs lines");
 
     // Another entity list, and a script.
     CHECK(editor.addReference("entities") == "Entities", "an entity list gets a free name");
-    CHECK(editor.addReference("file", "coin.forge") == "Coin", "a script is called after its file");
+    CHECK(editor.addReference("file", "coin.prop") == "Coin", "a script is called after its file");
     CHECK(editor.addReference("file").empty(), "a script reference with no script is refused");
-    CHECK(readFile(file).find("needs file:\"coin.forge\" as Coin") != std::string::npos, "the script is written as a needs file");
+    CHECK(readFile(file).find("needs file:\"coin.prop\" as Coin") != std::string::npos, "the script is written as a needs file");
     CHECK(editor.lastCompile().problems.empty(), "nothing compiled yet");
     editor.compile();
     CHECK(editor.lastCompile().errors == 0, "all of them are valid, so Compile has no errors");
@@ -2330,11 +2682,230 @@ static void aWireToAPinBehindItIsAnS() {
     CHECK(same, "a wire dragged from an input takes the same route");
 }
 
+
+// ---- nodes that are not connected to the script ----
+
+static const ScriptNode* firstFloating(const ScriptGraphEditor& editor) {
+    for (const auto& n : editor.graph().getNodes()) {
+        const ScriptNode* s = dynamic_cast<const ScriptNode*>(n.get());
+        if (s && s->floating) return s;
+    }
+    return nullptr;
+}
+
+/// A place on the canvas, in grid units, with nothing under or near it: below every node.
+static ImVec2 emptySpot(const ScriptGraphEditor& editor) {
+    float bottom = 0.0f;
+    for (const auto& n : editor.graph().getNodes()) bottom = (std::max)(bottom, n->position.y + n->size.y);
+    return ImVec2(1.0f, bottom + 2.0f);
+}
+
+static void typingInTheCanvasMenuAddsANodeThatFloatsUntilItIsWiredIn() {
+    std::string file = freshScript("floating", kThree);
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+    const std::string before = readFile(file);
+
+    // The menu has no text field until something is typed into it.
+    const ImVec2 spot = emptySpot(editor);
+    rightClick(editor, gridScreen(editor, spot.x, spot.y));
+    CHECK(popupWindow("##Popup_") != nullptr, "right-clicking empty canvas opens the menu");
+    CHECK(!ImGui::GetIO().WantTextInput, "with no text field");
+    ImGui::GetIO().AddInputCharactersUTF8("print");
+    frame(editor, 3);
+    CHECK(ImGui::GetIO().WantTextInput, "typing opens a search field");
+    CHECK(popupWindow("##Popup_") != nullptr, "in the same menu");
+    press(editor, ImGuiKey_Enter);
+    frame(editor, 3);
+
+    // The node is on the canvas where the menu was opened, and the script knows nothing about it.
+    CHECK(readFile(file) == before, "the script is not changed by a node that is not connected");
+    const ScriptNode* floating = firstFloating(editor);
+    CHECK(floating && floating->name == "Print Debug Message", "the best match was added");
+    if (!floating) return;
+    CHECK(std::abs(floating->position.x - spot.x) < 1.5f && std::abs(floating->position.y - spot.y) < 1.5f, "where the menu was opened");
+    CHECK(editor.message().empty(), "without complaint");
+
+    // It is still there when the script is opened again.
+    {
+        ScriptGraphEditor again(file, nullptr);
+        frame(again, 3);
+        const ScriptNode* kept = firstFloating(again);
+        CHECK(kept && kept->name == "Print Debug Message" && kept->position.x == floating->position.x, "kept in the layout file");
+    }
+
+    // Wiring the handler's Run output to it puts it in the script.
+    const ScriptNode* event = findNode(editor, "On Begin Play");
+    CHECK(event != nullptr, "the handler");
+    if (!event) return;
+    const ImVec2 from = pinScreen(editor, *event, 0, true);
+    const ImVec2 to = pinScreen(editor, *floating, 0, false);
+    mouseTo(editor, from);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frame(editor, 2);
+    mouseTo(editor, ImVec2((from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f), 2);
+    mouseTo(editor, to, 2);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frame(editor, 4);
+    CHECK(firstFloating(editor) == nullptr, "nothing floats once it is wired in");
+    CHECK(countOf(readFile(file), "print ") == 4, "the script now prints four times");
+    CHECK(readFile(file).find("fsrc") == std::string::npos && !fs::exists(file + ".layout") ||
+              readFile(file + ".layout").find("fsrc") == std::string::npos,
+          "and the layout no longer keeps it");
+    CHECK(editor.message().empty(), "without complaint");
+
+    // Each step is undone on its own.
+    CHECK(editor.undo(), "wiring it in can be undone");
+    frame(editor, 3);
+    CHECK(firstFloating(editor) != nullptr && readFile(file) == before, "which floats it again");
+    CHECK(editor.undo(), "and so can adding it");
+    frame(editor, 3);
+    CHECK(firstFloating(editor) == nullptr && readFile(file) == before, "which takes it away");
+    CHECK(editor.redo(), "redo brings it back");
+    frame(editor, 3);
+    CHECK(firstFloating(editor) != nullptr, "floating");
+}
+
+
+static void aValueNodeCanFloatAndBeWiredIntoAPinLater() {
+    std::string file = freshScript("floatvalue", kThree);
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+    const std::string before = readFile(file);
+
+    const ImVec2 spot = emptySpot(editor);
+    rightClick(editor, gridScreen(editor, spot.x, spot.y));
+    ImGui::GetIO().AddInputCharactersUTF8("distance");
+    frame(editor, 3);
+    press(editor, ImGuiKey_Enter);
+    frame(editor, 3);
+    CHECK(readFile(file) == before, "a value that is plugged into nothing is not in the script");
+    const ScriptNode* value = firstFloating(editor);
+    CHECK(value && value->name == "Distance" && value->isData(), "a value node floats on the canvas");
+    if (!value) return;
+
+    // Wire its output into the Message of the first print.
+    const ScriptNode* print = findNode(editor, "Print Debug Message", 0);
+    CHECK(print != nullptr, "a print node");
+    if (!print) return;
+    const ImVec2 from = pinScreen(editor, *value, 0, true);
+    const ImVec2 to = pinScreen(editor, *print, 1, false);
+    mouseTo(editor, from);
+    ImGui::GetIO().AddMouseButtonEvent(0, true);
+    frame(editor, 2);
+    mouseTo(editor, ImVec2((from.x + to.x) * 0.5f, (from.y + to.y) * 0.5f), 2);
+    mouseTo(editor, to, 2);
+    ImGui::GetIO().AddMouseButtonEvent(0, false);
+    frame(editor, 4);
+    CHECK(firstFloating(editor) == nullptr, "nothing floats once it is plugged in");
+    CHECK(readFile(file).find("print distance from") != std::string::npos, "the first print now prints a distance");
+    CHECK(editor.message().empty(), "without complaint");
+    const ScriptNode* plugged = findNode(editor, "Distance");
+    CHECK(plugged && std::abs(plugged->position.x - spot.x) < 1.5f && std::abs(plugged->position.y - spot.y) < 1.5f, "the node stays where it was");
+    CHECK(editor.undo(), "plugging it in can be undone");
+    frame(editor, 3);
+    CHECK(firstFloating(editor) != nullptr && readFile(file) == before, "which floats it again");
+
+    // Deleting it leaves nothing behind.
+    const ScriptNode* again = firstFloating(editor);
+    if (!again) return;
+    mouseTo(editor, ImVec2(nodeScreen(editor, *again).x + 10.0f, nodeScreen(editor, *again).y + 4.0f));
+    click(editor, ImVec2(nodeScreen(editor, *again).x + 10.0f, nodeScreen(editor, *again).y + 4.0f));
+    press(editor, ImGuiKey_Delete);
+    frame(editor, 3);
+    CHECK(firstFloating(editor) == nullptr && readFile(file) == before, "deleting a floating value removes it");
+    CHECK(!fs::exists(file + ".layout") || readFile(file + ".layout").find("fvalue") == std::string::npos, "and the layout forgets it");
+}
+
+static const char* kBlock = "header:\n\tneeds component:Transform\n\tvariable name:Count type:integer value:0\n\nimplement:\n\twhen created:\n\t\tif Count is above 3:\n\t\t\tprint \"many\"\n\t\tprint \"after\"\n";
+
+static void ctrlD(ScriptGraphEditor& editor) {
+    ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, true);
+    press(editor, ImGuiKey_D);
+    ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, false);
+    frame(editor, 3);
+}
+
+static void aDuplicatedNodeIsACopyConnectedToNothingAndNotInTheScript() {
+    std::string file = freshScript("duplicate", kThree);
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+    const std::string before = readFile(file);
+    const ScriptNode* two = findNode(editor, "Print Debug Message", 1);
+    if (!two) return;
+    const ImVec2 from = two->position;
+    click(editor, titleOf(editor, *two));
+    ctrlD(editor);
+
+    const ScriptNode* copy = firstFloating(editor);
+    CHECK(copy && copy->name == "Print Debug Message", "Ctrl+D made a copy of the selected node");
+    if (!copy) return;
+    CHECK(readFile(file) == before, "the script's text is untouched");
+    CHECK(editor.message().empty(), "without complaint");
+    CHECK(copy->position.x == std::round(from.x) + 2 && copy->position.y == std::round(from.y) + 2, "the copy is a little below and to the right");
+    bool sameMessage = false;
+    for (const ScriptPinField& f : copy->fields) sameMessage = sameMessage || (f.name == "Message" && f.text == "\"two\"");
+    CHECK(sameMessage, "it has the same settings");
+    CHECK(copy->hasExecIn && copy->execTargets.size() == copy->execLabels.size(), "it has the same pins");
+    for (const std::string& target : copy->execTargets) CHECK(target.empty(), "and nothing runs after it");
+    CHECK(findNode(editor, "Print Debug Message", 3) != nullptr, "the original three are still there");
+
+    // One undo takes the copy away again.
+    CHECK(editor.undo(), "duplicating can be undone");
+    frame(editor, 3);
+    CHECK(firstFloating(editor) == nullptr && readFile(file) == before, "which leaves nothing behind");
+}
+
+static void aDuplicatedBlockLeavesItsContentsAndItsConditionBehind() {
+    std::string file = freshScript("duplicateblock", kBlock);
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+    const std::string before = readFile(file);
+    const ScriptNode* branch = findNode(editor, "Branch");
+    if (!branch) return;
+    const std::string key = branch->key;
+    const size_t nodes = editor.graph().getNodes().size();
+
+    CHECK(editor.duplicateNodes({key}), "a branch can be copied");
+    frame(editor, 3);
+    CHECK(readFile(file) == before, "the script's text is untouched");
+    const ScriptNode* copy = firstFloating(editor);
+    CHECK(copy && copy->name == "Branch", "the copy is a floating Branch");
+    if (!copy) return;
+    CHECK(editor.graph().getNodes().size() == nodes + 1, "one node was added: not what is inside it or plugged into it");
+    for (const std::string& target : copy->execTargets) CHECK(target.empty(), "nothing is under the copy's outputs");
+    for (const ScriptPinField& f : copy->fields) CHECK(f.wiredKey.empty(), "and nothing is plugged into its pins");
+    const ScriptNode* original = findNode(editor, "Branch");
+    CHECK(original && !original->floating && !original->execTargets.empty() && original->execTargets[0] != "", "the original keeps its wires");
+}
+
+static void escapeClosesTheMenuAndBackspaceBringsTheMenuBack() {
+    std::string file = freshScript("menusearch", kThree);
+    ScriptGraphEditor editor(file, nullptr);
+    frame(editor, 4);
+    const ImVec2 spot = emptySpot(editor);
+    rightClick(editor, gridScreen(editor, spot.x, spot.y));
+    ImGui::GetIO().AddInputCharactersUTF8("zz");
+    frame(editor, 3);
+    CHECK(ImGui::GetIO().WantTextInput, "typing opens the field");
+    press(editor, ImGuiKey_Backspace);
+    press(editor, ImGuiKey_Backspace);
+    frame(editor, 3);
+    CHECK(!ImGui::GetIO().WantTextInput, "emptying it closes the field again");
+    CHECK(popupWindow("##Popup_") != nullptr, "and the menu is still open");
+    ImGui::GetIO().AddInputCharactersUTF8("q");
+    frame(editor, 3);
+    press(editor, ImGuiKey_Escape);
+    frame(editor, 3);
+    CHECK(popupWindow("##Popup_") == nullptr, "Escape closes the whole menu");
+    CHECK(firstFloating(editor) == nullptr, "and adds nothing");
+}
+
 int main(int argc, char** argv) {
-    fs::path forgeScript = argc > 1 ? fs::path(argv[1]) : fs::path("G:/ForgeEngine/ForgeScript");
+    fs::path propulsionScript = argc > 1 ? fs::path(argv[1]) : fs::path("G:/PropulsionMKI/PropulsionScript");
     setupImGui();
 
-    everyRealScriptLaysOutWithoutOverlap(forgeScript);
+    everyRealScriptLaysOutWithoutOverlap(propulsionScript);
     editsGoThroughToTheFile();
     typingIntoAFieldEditsTheScript();
     draggingAnExecutionWireReordersTheScript();
@@ -2344,13 +2915,27 @@ int main(int argc, char** argv) {
     deletingASelectionIsOneUndoableStep();
     deletingTheLastNodeInABlockWorks();
     anAddedNodeLandsWhereItWasAskedForAndStays();
+    typingInTheCanvasMenuAddsANodeThatFloatsUntilItIsWiredIn();
+    aValueNodeCanFloatAndBeWiredIntoAPinLater();
+    aDuplicatedNodeIsACopyConnectedToNothingAndNotInTheScript();
+    aDuplicatedBlockLeavesItsContentsAndItsConditionBehind();
+    escapeClosesTheMenuAndBackspaceBringsTheMenuBack();
     materialGraphSelectDragDeleteAndUndo();
     materialGraphChangesMadeInAnyWayAreUndoable();
     aNodeThatNeedsAListCanBePlacedBeforeThereIsOne();
     thePlusButtonDeclaresAVariableAndTypingRenamesIt();
     aMeshHasItsMaterialAndTransformUnderIt();
+    aComponentsEditorShowsInTheDetailsPanelWhenSelected();
+    theObjectsOwnEditorShowsWhenTheObjectIsSelected();
     changingAVariablesTypeResetsItsValue();
     aListDraggedOntoForEachIsPluggedIn();
+    remembersAreListedAsLocalVariablesUnderTheVariables();
+    generatedNodesRunLeftToRightWithTwoSquaresBetween();
+    aNodeAddedBetweenTwoBumpsTheRestToTheRight();
+    aNodeAddedAtTheEndGoesAfterTheLastOne();
+    aLongScriptBreaksTheLineAfterTenNodesAndReadsLikeABook();
+    aNodeAddedToAFullLineStartsTheNextOne();
+    aSecondHandlerStartsBelowEverythingAtTheLeft();
     aVariableDroppedOnTheCanvasBecomesAGetNodeToWireIn();
     aWiredGetNodeCanBeWiredIntoAnotherPin();
     aVariableDroppedOnTheCanvasBecomesAGetNodeToWireIn(1.5f);
@@ -2358,6 +2943,7 @@ int main(int argc, char** argv) {
     aGetNodeWireLetGoOnEmptyCanvasOffersTheNewNodesThatTakeIt();
     aGetNodeWireLetGoOnEmptyCanvasOffersTheNewNodesThatTakeIt(1.5f);
     aBooleanGetNodeCanBeDraggedIntoANewBranch();
+    aBranchComesAloneAndABooleanPlugsStraightIntoIt();
     aSetVariableOnABooleanHasACheckbox();
     aSetVariableOnABooleanHasACheckbox(1.5f);
     compileListsWhatWouldFailAtPlay();
@@ -2382,18 +2968,18 @@ int main(int argc, char** argv) {
     aWireChangesShapeWhenTheDiagonalNoLongerFits();
     aWireToAPinBehindItIsAnS();
 
-    // Pictures of a few graphs, for looking at:  ScriptGraphTest <ForgeScript> --shots <folder>
+    // Pictures of a few graphs, for looking at:  ScriptGraphTest <PropulsionScript> --shots <folder>
     if (argc > 3 && std::string(argv[2]) == "--shots") {
-        std::string tree = copyTree(forgeScript / "behaviors", "shots");
+        std::string tree = copyTree(propulsionScript / "behaviors", "shots");
         for (const char* name : {"rotator", "door", "player", "trap", "health_pickup", "flow_kit", "math_kit", "world_kit", "list_kit"}) {
-            ScriptGraphEditor editor((fs::path(tree) / (std::string(name) + ".forge")).generic_string(), nullptr);
+            ScriptGraphEditor editor((fs::path(tree) / (std::string(name) + ".prop")).generic_string(), nullptr);
             frame(editor, 4);
             screenshot(fs::path(argv[3]) / (std::string(name) + ".png"));
         }
 
         // A box being dragged over a script graph, and the nodes it selected.
         {
-            ScriptGraphEditor editor((fs::path(tree) / "door.forge").generic_string(), nullptr);
+            ScriptGraphEditor editor((fs::path(tree) / "door.prop").generic_string(), nullptr);
             frame(editor, 4);
             ImVec2 c = canvasPos();
             dragBox(editor, ImVec2(c.x + 6.0f, c.y + 6.0f), ImVec2(c.x + 760.0f, c.y + 330.0f), false);
@@ -2405,7 +2991,7 @@ int main(int argc, char** argv) {
 
         // The Components and Variables panels at each UI scale (File > Preferences > UI Scaling).
         for (float scale : {1.0f, 1.5f, 2.0f}) {
-            ForgeEngine::UI::setUIScale(scale);
+            PropulsionMKI::UI::setUIScale(scale);
             std::string file = freshScript(
                 "panels",
                 "header:\n\tneeds component:Transform\n\tneeds entities:Foes tag:\"enemy\"\n\n\tvariable name:Speed type:decimal value:45.0\n\tvariable name:Health type:integer value:100 exposed:true\n"
@@ -2429,18 +3015,18 @@ int main(int argc, char** argv) {
             std::snprintf(name, sizeof(name), "panels_%.1f.png", static_cast<double>(scale));
             screenshot(fs::path(argv[3]) / name);
         }
-        ForgeEngine::UI::setUIScale(1.0f);
+        PropulsionMKI::UI::setUIScale(1.0f);
 
         // A For Each with its list dropdown open, and a reference selected with its details.
         for (float scale : {1.0f, 2.0f}) {
-            ForgeEngine::UI::setUIScale(scale);
+            PropulsionMKI::UI::setUIScale(scale);
             std::string file = freshScript("dropshot", kPickScript);
-            writeFile(fs::path(file).parent_path() / "coin.forge", "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"coin\"\n");
+            writeFile(fs::path(file).parent_path() / "coin.prop", "header:\n\tneeds component:Transform\n\nimplement:\n\twhen created:\n\t\tprint \"coin\"\n");
             ScriptGraphEditor editor(file, nullptr);
             editor.setObject("Door", sampleComponents(), 1);
             frame(editor, 4);
             editor.addReference("entity");
-            editor.addReference("file", "coin.forge");
+            editor.addReference("file", "coin.prop");
             editor.edit("add", "For Each", "h0", "0", "0");
             frame(editor, 3);
             char name[64];
@@ -2455,7 +3041,7 @@ int main(int argc, char** argv) {
             std::snprintf(name, sizeof(name), "references_%.1f.png", static_cast<double>(scale));
             screenshot(fs::path(argv[3]) / name);
         }
-        ForgeEngine::UI::setUIScale(1.0f);
+        PropulsionMKI::UI::setUIScale(1.0f);
 
         // A For Each with a Get node wired into its List pin.
         {
@@ -2495,9 +3081,9 @@ int main(int argc, char** argv) {
 
         // The code pane beside the graph, with a node selected (at each UI scale).
         for (float scale : {1.0f, 1.5f}) {
-            ForgeEngine::UI::setUIScale(scale);
-            std::string tree2 = copyTree(forgeScript / "behaviors", "codeshot");
-            ScriptGraphEditor editor((fs::path(tree2) / "player.forge").generic_string(), nullptr);
+            PropulsionMKI::UI::setUIScale(scale);
+            std::string tree2 = copyTree(propulsionScript / "behaviors", "codeshot");
+            ScriptGraphEditor editor((fs::path(tree2) / "player.prop").generic_string(), nullptr);
             editor.setCodeOpen(true);
             frame(editor, 4);
             if (const ScriptNode* rotate = findNode(editor, "Rotate Object")) click(editor, titleOf(editor, *rotate));
@@ -2506,12 +3092,12 @@ int main(int argc, char** argv) {
             std::snprintf(name, sizeof(name), "code_%.1f.png", static_cast<double>(scale));
             screenshot(fs::path(argv[3]) / name);
         }
-        ForgeEngine::UI::setUIScale(1.0f);
+        PropulsionMKI::UI::setUIScale(1.0f);
 
         // Typing in the code pane: text that does not parse yet (marked where it stops), with a selection.
         {
-            std::string tree3 = copyTree(forgeScript / "behaviors", "codetypeshot");
-            ScriptGraphEditor editor((fs::path(tree3) / "player.forge").generic_string(), nullptr);
+            std::string tree3 = copyTree(propulsionScript / "behaviors", "codetypeshot");
+            ScriptGraphEditor editor((fs::path(tree3) / "player.prop").generic_string(), nullptr);
             editor.setCodeOpen(true);
             frame(editor, 4);
             clickLineEnd(editor, 19);                         // event name:Died

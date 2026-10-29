@@ -14,6 +14,9 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 heightParams;          // x=heightScale, y=invertHeight, z=unused, w=unused
     vec3 cameraPos;             // Camera position for specular calculations
     float padding;
+    ivec4 textureSlots;         // places in the texture table: x=base colour, y=metallic, z=roughness, w=normal (the flags say which are used)
+    ivec4 textureSlots2;        // x=occlusion, y=emissive, z=height, w=opacity (-1: none)
+    vec4 surfaceParams;         // x=blend mode (0 opaque, 1 masked, 2 translucent), y=opacity, z=mask cutoff, w=1 if two sided
 } ubo;
 
 layout(location = 0) in vec3 inPosition;

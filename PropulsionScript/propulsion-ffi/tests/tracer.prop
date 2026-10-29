@@ -1,0 +1,14 @@
+// tracer.prop: looks straight down once when it is created and says what it saw (used by tests/ffi.rs).
+
+header:
+	needs component:Transform
+
+implement:
+	when created:
+		remember Start vector x:0 y:0 z:1
+		remember End vector x:0 y:0 z:-20
+		remember Seen trace from Start to End
+		print "blocked " joined with Seen.Blocked
+		print "far " joined with Seen.Distance
+		if Seen.Entity is missing, then print "nobody"
+		if Seen.Entity is present, then print "somebody"

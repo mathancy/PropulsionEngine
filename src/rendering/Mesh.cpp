@@ -12,7 +12,7 @@
 #undef min
 #endif
 
-namespace Forge {
+namespace Propulsion {
 
 VkVertexInputBindingDescription Vertex::getBindingDescription() {
     VkVertexInputBindingDescription bindingDescription{};
@@ -58,12 +58,22 @@ Mesh::Mesh(VulkanContext* context, const std::vector<Vertex>& vertices, const st
 
 Mesh::~Mesh() {
     VkDevice device = m_context->getDevice();
-    
+
+    destroyBlas();
     vkDestroyBuffer(device, m_indexBuffer, nullptr);
     vkFreeMemory(device, m_indexBufferMemory, nullptr);
     
     vkDestroyBuffer(device, m_vertexBuffer, nullptr);
     vkFreeMemory(device, m_vertexBufferMemory, nullptr);
+}
+
+void Mesh::destroyBlas() {
+    if (m_blas.handle != VK_NULL_HANDLE) {
+        m_context->getRayTracingFunctions().vkDestroyAccelerationStructureKHR(m_context->getDevice(), m_blas.handle, nullptr);
+    }
+    if (m_blas.buffer != VK_NULL_HANDLE) vkDestroyBuffer(m_context->getDevice(), m_blas.buffer, nullptr);
+    if (m_blas.memory != VK_NULL_HANDLE) vkFreeMemory(m_context->getDevice(), m_blas.memory, nullptr);
+    m_blas = Blas{};
 }
 
 void Mesh::calculateBounds() {
@@ -121,28 +131,12 @@ void Mesh::createVertexBuffer() {
     memcpy(data, m_vertices.data(), (size_t)bufferSize);
     vkUnmapMemory(m_context->getDevice(), stagingBufferMemory);
 
-    // Create vertex buffer in device local memory
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(m_context->getDevice(), &bufferInfo, nullptr, &m_vertexBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create vertex buffer!");
-    }
-
-    vkGetBufferMemoryRequirements(m_context->getDevice(), m_vertexBuffer, &memRequirements);
-
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = m_context->findMemoryType(memRequirements.memoryTypeBits, 
-                                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    if (vkAllocateMemory(m_context->getDevice(), &allocInfo, nullptr, &m_vertexBufferMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate vertex buffer memory!");
-    }
-
-    vkBindBufferMemory(m_context->getDevice(), m_vertexBuffer, m_vertexBufferMemory, 0);
+    // Create vertex buffer in device local memory (readable by the acceleration structure builder and by shaders when the GPU can trace rays)
+    const bool traceable = m_context->getRayTracingCaps().canQuery();
+    VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    if (traceable) usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    m_context->createBuffer(bufferSize, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_vertexBuffer, m_vertexBufferMemory, traceable);
+    if (traceable) m_vertexAddress = m_context->getBufferAddress(m_vertexBuffer);
 
     // Copy from staging buffer to vertex buffer
     VkCommandBuffer commandBuffer = m_context->beginSingleTimeCommands();
@@ -199,28 +193,12 @@ void Mesh::createIndexBuffer() {
     memcpy(data, m_indices.data(), (size_t)bufferSize);
     vkUnmapMemory(m_context->getDevice(), stagingBufferMemory);
 
-    // Create index buffer in device local memory
-    VkBufferCreateInfo bufferInfo{};
-    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = bufferSize;
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    if (vkCreateBuffer(m_context->getDevice(), &bufferInfo, nullptr, &m_indexBuffer) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create index buffer!");
-    }
-
-    vkGetBufferMemoryRequirements(m_context->getDevice(), m_indexBuffer, &memRequirements);
-
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = m_context->findMemoryType(memRequirements.memoryTypeBits, 
-                                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    if (vkAllocateMemory(m_context->getDevice(), &allocInfo, nullptr, &m_indexBufferMemory) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to allocate index buffer memory!");
-    }
-
-    vkBindBufferMemory(m_context->getDevice(), m_indexBuffer, m_indexBufferMemory, 0);
+    // Create index buffer in device local memory (see createVertexBuffer)
+    const bool traceable = m_context->getRayTracingCaps().canQuery();
+    VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    if (traceable) usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+    m_context->createBuffer(bufferSize, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_indexBuffer, m_indexBufferMemory, traceable);
+    if (traceable) m_indexAddress = m_context->getBufferAddress(m_indexBuffer);
 
     // Copy from staging buffer to index buffer
     VkCommandBuffer commandBuffer = m_context->beginSingleTimeCommands();
@@ -695,5 +673,5 @@ Mesh* Mesh::createWedge(VulkanContext* context, float startAngle, float endAngle
     return new Mesh(context, vertices, indices);
 }
 
-} // namespace Forge
+} // namespace Propulsion
 

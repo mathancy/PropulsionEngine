@@ -11,7 +11,7 @@
 #include <GLFW/glfw3native.h>
 #endif
 
-namespace ForgeEngine {
+namespace PropulsionMKI {
 namespace Platform {
 
 #ifdef _WIN32
@@ -37,7 +37,7 @@ std::string showSaveFolderDialog(GLFWwindow* window, const std::string& suggeste
     char documentsPath[MAX_PATH];
     std::string defaultDir;
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, documentsPath))) {
-        defaultDir = std::string(documentsPath) + "\\Forgeworks Interactive\\Forge Engine\\Projects";
+        defaultDir = std::string(documentsPath) + "\\Forgeworks Interactive\\Propulsion MK I\\Projects";
         std::filesystem::create_directories(defaultDir);
     }
     
@@ -75,15 +75,15 @@ std::string showOpenFileDialog(GLFWwindow* window) {
     ofn.hwndOwner = glfwGetWin32Window(window);
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = "Forge Project Files\0*.fproj\0All Files\0*.*\0";
+    ofn.lpstrFilter = "Propulsion Project Files\0*.pproj\0All Files\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.lpstrFileTitle = NULL;
     ofn.nMaxFileTitle = 0;
     
-    // Set default directory to Documents/Forgeworks Interactive/Forge Engine/Projects
+    // Set default directory to Documents/Forgeworks Interactive/Propulsion MK I/Projects
     char documentsPath[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, documentsPath))) {
-        std::string defaultDir = std::string(documentsPath) + "\\Forgeworks Interactive\\Forge Engine\\Projects";
+        std::string defaultDir = std::string(documentsPath) + "\\Forgeworks Interactive\\Propulsion MK I\\Projects";
         ofn.lpstrInitialDir = defaultDir.c_str();
     }
     
@@ -152,7 +152,7 @@ std::vector<std::string> showImportFileDialog(GLFWwindow* window) {
 std::string getDefaultProjectsDirectory() {
     char documentsPath[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, 0, documentsPath))) {
-        std::string defaultDir = std::string(documentsPath) + "\\Forgeworks Interactive\\Forge Engine\\Projects";
+        std::string defaultDir = std::string(documentsPath) + "\\Forgeworks Interactive\\Propulsion MK I\\Projects";
         std::filesystem::create_directories(defaultDir);
         return defaultDir;
     }
@@ -210,7 +210,7 @@ std::string getDefaultProjectsDirectory() {
 bool openWithDefaultApp(const std::string& path) {
 #ifdef _WIN32
     // ShellExecute with the "open" verb: the editor the user has chosen for this kind of file.
-    // For a type with no editor chosen (like .forge), Windows asks which program to use.
+    // For a type with no editor chosen (like .prop), Windows asks which program to use.
     HINSTANCE result = ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(result) > 32;
 #else
@@ -220,4 +220,4 @@ bool openWithDefaultApp(const std::string& path) {
 }
 
 } // namespace Platform
-} // namespace ForgeEngine
+} // namespace PropulsionMKI

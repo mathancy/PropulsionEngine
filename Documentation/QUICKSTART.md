@@ -1,4 +1,4 @@
-# Forge Engine - Quick Start Guide
+# Propulsion MK I - Quick Start Guide
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@
 
 ### Step 1: Run the Setup Script
 
-Open PowerShell in the ForgeEngine directory and run:
+Open PowerShell in the PropulsionMKI directory and run:
 
 ```powershell
 .\setup.ps1
@@ -35,7 +35,7 @@ The script will prompt you to set up GLAD. Follow these steps:
    - Options: ☑ **Generate a loader**
 3. Click **GENERATE**
 4. Download the **glad.zip** file
-5. Extract all contents to `G:\ForgeEngine\external\glad\`
+5. Extract all contents to `G:\PropulsionMKI\external\glad\`
 
 After extraction, verify you have:
 ```
@@ -63,14 +63,14 @@ cmake ..
 cmake --build . --config Release
 ```
 
-### Step 4: Run Forge Engine
+### Step 4: Run Propulsion MK I
 
 ```powershell
 # From the build directory
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 
 # Or from the root directory
-.\build\bin\Release\ForgeEngine.exe
+.\build\bin\Release\PropulsionMKI.exe
 ```
 
 ## Controls
@@ -90,7 +90,7 @@ Once the engine is running:
 ## Expected Result
 
 You should see:
-- A window titled "Forge Engine"
+- A window titled "Propulsion MK I"
 - Menu bar with File, Edit, Window, and Help menus
 - A viewport showing a **red cube**
 - **Sky blue background** (RGB: 135, 206, 235)
@@ -127,7 +127,7 @@ You should see:
 ## Project Structure
 
 ```
-ForgeEngine/
+PropulsionMKI/
 ├── external/          # Third-party libraries
 │   ├── glfw/         # Window management
 │   ├── glad/         # OpenGL loader
@@ -152,7 +152,7 @@ ForgeEngine/
 ├── README.md          # Project overview
 ├── QUICKSTART.md      # This file
 ├── SETUP.md           # Detailed setup guide
-└── LICENSE            # Proprietary license
+└── LICENSE            # MIT license
 ```
 
 ## Next Steps
@@ -177,7 +177,7 @@ cd build
 cmake --build . --config Release
 
 # Run
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 ```
 
 ## Support

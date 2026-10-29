@@ -1,4 +1,4 @@
-# Forge Engine - Project Summary
+# Propulsion MK I - Project Summary
 
 **Version**: 1.0.0 (Foundation)  
 **Status**: ✅ Complete and Functional  
@@ -110,11 +110,11 @@ cmake ..
 cmake --build . --config Release
 
 # 4. Run
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 ```
 
 ### What You Get
-- Window titled "Forge Engine" (1280x720)
+- Window titled "Propulsion MK I" (1280x720)
 - Menu bar with File, Edit, Window, Help
 - Viewport showing a red cube
 - Sky blue background
@@ -126,7 +126,7 @@ cmake --build . --config Release
 
 ### Class Diagram
 ```
-Forge::Engine (main controller)
+Propulsion::Engine (main controller)
   ├── Window (GLFW wrapper)
   ├── Camera (view/projection)
   ├── Shader (GLSL programs)
@@ -135,7 +135,7 @@ Forge::Engine (main controller)
 
 ### File Organization
 ```
-ForgeEngine/
+PropulsionMKI/
 ├── src/          → Implementation
 ├── include/      → Headers
 ├── external/     → Dependencies
@@ -377,7 +377,7 @@ ForgeEngine/
 4. Begin Phase 2 development (scene management)
 
 ### Vision Statement
-Forge Engine will become a powerful yet simple game engine that empowers the Forgeworks Interactive team to create amazing games quickly and efficiently. With visual scripting simpler than Unreal's Blueprints and a clean, intuitive interface, it will be the perfect tool for our creative vision.
+Propulsion MK I will become a powerful yet simple game engine that empowers the Forgeworks Interactive team to create amazing games quickly and efficiently. With visual scripting simpler than Unreal's Blueprints and a clean, intuitive interface, it will be the perfect tool for our creative vision.
 
 ---
 

@@ -1,20 +1,20 @@
-﻿# Forge Engine Setup Script
+﻿# Propulsion MK I Setup Script
 # This script automatically sets up and builds the complete engine
 
 $ErrorActionPreference = "Stop"
-$Host.UI.RawUI.WindowTitle = "Forge Engine Setup"
+$Host.UI.RawUI.WindowTitle = "Propulsion MK I Setup"
 
 Start-Transcript -Path "$PSScriptRoot\setup_log.txt" -Force
 
 # Define shared dependencies location
 $documentsPath = [Environment]::GetFolderPath("MyDocuments")
-$forgeSharedDir = Join-Path $documentsPath "Forgeworks Interactive\Forge Engine\Dependencies"
+$propulsionSharedDir = Join-Path $documentsPath "Forgeworks Interactive\Propulsion MK I\Dependencies"
 
 function Select-FolderDialog {
     try {
         Add-Type -AssemblyName System.Windows.Forms
         $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
-        $folderBrowser.Description = "Select installation directory for Forge Engine"
+        $folderBrowser.Description = "Select installation directory for Propulsion MK I"
         $folderBrowser.RootFolder = [System.Environment+SpecialFolder]::MyComputer
         $folderBrowser.ShowNewFolderButton = $true
         
@@ -40,7 +40,7 @@ function Update-Repository {
         [string]$expectedVersion = ""
     )
     
-    $repoPath = Join-Path $forgeSharedDir $name
+    $repoPath = Join-Path $propulsionSharedDir $name
     $needsClone = $false
     
     if (Test-Path $repoPath) {
@@ -64,7 +64,7 @@ function Update-Repository {
             }
         } elseif (-not $isGitRepo) {
             Write-Host "$name directory exists but is not a git repository, re-cloning..." -ForegroundColor Yellow
-            Set-Location $forgeSharedDir
+            Set-Location $propulsionSharedDir
             Remove-Item -Path $repoPath -Recurse -Force
             $needsClone = $true
         } else {
@@ -75,7 +75,7 @@ function Update-Repository {
     }
     
     if ($needsClone) {
-        Set-Location $forgeSharedDir
+        Set-Location $propulsionSharedDir
         Write-Host "Cloning $name..." -ForegroundColor Green
         if ($branch) {
             git clone --branch $branch --depth 1 $url $name
@@ -88,7 +88,7 @@ function Update-Repository {
 }
 
 try {
-    Write-Host "=== Forge Engine Complete Setup ===" -ForegroundColor Cyan
+    Write-Host "=== Propulsion MK I Complete Setup ===" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Please select installation directory..." -ForegroundColor Yellow
     $installDir = Select-FolderDialog
@@ -102,14 +102,14 @@ try {
         exit 1
     }
 
-    $engineDir = Join-Path $installDir "ForgeEngine"
+    $engineDir = Join-Path $installDir "PropulsionMKI"
     Write-Host ""
-    Write-Host "Installing Forge Engine to: $engineDir" -ForegroundColor Green
+    Write-Host "Installing Propulsion MK I to: $engineDir" -ForegroundColor Green
     Write-Host ""
 
     # Remove existing installation if it exists
     if (Test-Path $engineDir) {
-        Write-Host "Existing ForgeEngine installation found, removing..." -ForegroundColor Yellow
+        Write-Host "Existing PropulsionMKI installation found, removing..." -ForegroundColor Yellow
         Remove-Item -Path $engineDir -Recurse -Force
         Write-Host "Old installation removed" -ForegroundColor Green
         Write-Host ""
@@ -128,7 +128,7 @@ try {
         }
     }
 
-    @("CMakeLists.txt", ".gitignore", ".gitattributes", "ForgeEngine.code-workspace", "LICENSE", "compile_shaders.ps1") | ForEach-Object {
+    @("CMakeLists.txt", ".gitignore", ".gitattributes", "PropulsionMKI.code-workspace", "LICENSE", "compile_shaders.ps1") | ForEach-Object {
         $sourceFile = Join-Path $scriptDir $_
         if (Test-Path $sourceFile) {
             Copy-Item -Path $sourceFile -Destination $engineDir -Force
@@ -139,9 +139,9 @@ try {
     Write-Host ""
     
     # Create shared dependencies directory
-    Write-Host "Setting up shared dependencies in: $forgeSharedDir" -ForegroundColor Cyan
-    if (-not (Test-Path $forgeSharedDir)) {
-        New-Item -ItemType Directory -Path $forgeSharedDir -Force | Out-Null
+    Write-Host "Setting up shared dependencies in: $propulsionSharedDir" -ForegroundColor Cyan
+    if (-not (Test-Path $propulsionSharedDir)) {
+        New-Item -ItemType Directory -Path $propulsionSharedDir -Force | Out-Null
     }
     
     Set-Location $engineDir
@@ -202,7 +202,7 @@ try {
 
     $gladDir = Join-Path $externalDir "glad"
     $gladDir = Join-Path $externalDir "glad"
-    $sharedGladDir = Join-Path $forgeSharedDir "glad"
+    $sharedGladDir = Join-Path $propulsionSharedDir "glad"
     
     if (-not (Test-Path $sharedGladDir)) {
         Write-Host "GLAD not found in shared location, checking source..." -ForegroundColor Yellow
@@ -215,7 +215,7 @@ try {
         } else {
             Write-Host "GLAD not found in source directory!" -ForegroundColor Red
             Write-Host ""
-            Write-Host "GLAD must be in G:\ForgeEngine\external\glad\" -ForegroundColor Yellow
+            Write-Host "GLAD must be in G:\PropulsionMKI\external\glad\" -ForegroundColor Yellow
             Set-Location $engineDir
             # explorer.exe $engineDir
             Write-Host ""
@@ -271,7 +271,7 @@ try {
     Write-Host ""
     Write-Host "=== Dependencies Complete! ===" -ForegroundColor Green
     Write-Host ""
-    Write-Host "Shared dependencies location: $forgeSharedDir" -ForegroundColor Cyan
+    Write-Host "Shared dependencies location: $propulsionSharedDir" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "[BUILDING ENGINE]" -ForegroundColor Cyan
     Write-Host ""
@@ -313,7 +313,7 @@ try {
     Write-Host "CMake configuration successful" -ForegroundColor Green
     Write-Host ""
 
-    Write-Host "Building Forge Engine (Release)..." -ForegroundColor Yellow
+    Write-Host "Building Propulsion MK I (Release)..." -ForegroundColor Yellow
     Write-Host "This may take 2-5 minutes..." -ForegroundColor Gray
     Write-Host ""
 
@@ -354,10 +354,10 @@ try {
 
     Set-Location $engineDir
 
-    $exePath = Join-Path $engineDir "ForgeEngine.exe"
+    $exePath = Join-Path $engineDir "PropulsionMKI.exe"
     
     if (Test-Path $exePath) {
-        Write-Host "FORGE ENGINE SETUP COMPLETE!" -ForegroundColor Green
+        Write-Host "PROPULSION MK I SETUP COMPLETE!" -ForegroundColor Green
         Write-Host ""
         Write-Host "Installation Directory:" -ForegroundColor Cyan
         Write-Host "  $engineDir" -ForegroundColor White
@@ -365,7 +365,7 @@ try {
         Write-Host "Executable Location:" -ForegroundColor Cyan
         Write-Host "  $exePath" -ForegroundColor White
         Write-Host ""
-        Write-Host "To run: cd `"$engineDir`" ; .\ForgeEngine.exe" -ForegroundColor Yellow
+        Write-Host "To run: cd `"$engineDir`" ; .\PropulsionMKI.exe" -ForegroundColor Yellow
         Write-Host ""
         Start-Sleep -Seconds 2
         # explorer.exe $engineDir

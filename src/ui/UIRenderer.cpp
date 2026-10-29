@@ -7,7 +7,7 @@
 #include <imgui_impl_vulkan.h>
 #include "ui/IconsFontAwesome7.h"
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::renderUI() {
     // Apply a UI scale change requested last frame (never mid-frame: fonts/style must be stable while drawing)
@@ -121,6 +121,7 @@ void Engine::renderUI() {
             ImGui::DockBuilderDockWindow("Viewport", dock_main_id);
             ImGui::DockBuilderDockWindow("Objects", dock_right_id);
             ImGui::DockBuilderDockWindow("Content Browser", dock_bottom_id);
+            ImGui::DockBuilderDockWindow("Output Log", dock_bottom_id);  // a tab beside the Content Browser
             
             ImGui::DockBuilderFinish(dockspace_id);
         }
@@ -135,8 +136,6 @@ void Engine::renderUI() {
         Tab& activeTab = m_tabs[m_activeTabIndex];
         if (activeTab.type == TabType::Scene) {
             renderSceneTab();
-        } else if (activeTab.type == TabType::DebugOutput) {
-            renderDebugOutputTab();
         } else if (activeTab.type == TabType::ScriptGraph) {
             renderScriptGraphTab(activeTab);
         } else {
@@ -153,6 +152,11 @@ void Engine::renderUI() {
         
         if (m_showContentBrowser) {
             renderContentBrowser();
+        }
+
+        if (m_showOutputLog) {
+            m_outputLog.draw(&m_showOutputLog);
+            if (!m_showOutputLog) savePreferences();  // closed with its X
         }
     }
     
@@ -178,14 +182,37 @@ void Engine::renderUI() {
         
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(ForgeEngine::UI::scaled(8.0f), ForgeEngine::UI::scaled(2.0f)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(PropulsionMKI::UI::scaled(8.0f), PropulsionMKI::UI::scaled(2.0f)));
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
         
         ImGui::Begin("##Footer", nullptr, footerFlags);
         
         // Left-justify the version text
-        const char* versionText = "Forge Engine v0.1.0-alpha";
+        const char* versionText = "Propulsion MK I v0.1.0-alpha";
         ImGui::TextUnformatted(versionText);
+
+        // What the Output Log has caught, in the footer so a problem isn't missed with the panel closed. Click to open it.
+        {
+            const size_t errors = m_outputLog.errorsSinceClear();
+            const size_t warnings = m_outputLog.warningsSinceClear();
+            char status[96];
+            std::snprintf(status, sizeof(status), "Output Log: %zu error%s, %zu warning%s", errors, errors == 1 ? "" : "s",
+                          warnings, warnings == 1 ? "" : "s");
+            const ImVec4 color = errors > 0 ? ImVec4(1.00f, 0.38f, 0.38f, 1.0f)
+                               : warnings > 0 ? ImVec4(1.00f, 0.84f, 0.30f, 1.0f)
+                               : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+            ImGui::SameLine(0.0f, PropulsionMKI::UI::scaled(24.0f));
+            ImGui::TextColored(color, "%s", status);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                PropulsionMKI::UI::tooltip("Open the Output Log");
+            }
+            if (ImGui::IsItemClicked()) {
+                m_showOutputLog = true;
+                ImGui::SetWindowFocus("Output Log");
+                savePreferences();
+            }
+        }
         
         // Right-justify the copyright text
         const char* copyrightText = "Copyright (c) 2025 Forgeworks Interactive Limited. All rights reserved.";
@@ -208,11 +235,20 @@ void Engine::renderUI() {
 
 void Engine::renderObjectsPanel() {
     ImGui::Begin("Objects");
+
+    // A name that was being typed and is let go of is one step in the undo history (not one per letter).
+    if (m_pendingNameEdit.fieldId != 0 && ImGui::GetActiveID() != m_pendingNameEdit.fieldId) {
+        if (m_pendingNameEdit.before) recordObjectEdit(m_pendingNameEdit.index, *m_pendingNameEdit.before);
+        m_pendingNameEdit = PendingEdit();
+    }
     
+    renderEnvironmentSection();
+
     ImGui::Text("Scene Objects:");
     ImGui::Separator();
     
     int objectToDelete = -1;
+    int objectToDuplicate = -1;
     for (size_t i = 0; i < m_sceneObjects.size(); i++) {
         SceneObject& obj = m_sceneObjects[i];
         
@@ -232,8 +268,8 @@ void Engine::renderObjectsPanel() {
             if (ImGui::MenuItem("Delete", "Del")) {
                 objectToDelete = static_cast<int>(i);
             }
-            if (ImGui::MenuItem("Duplicate")) {
-                // TODO: Implement duplicate
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
+                objectToDuplicate = static_cast<int>(i);
             }
             ImGui::EndPopup();
         }
@@ -247,6 +283,15 @@ void Engine::renderObjectsPanel() {
     if (objectToDelete >= 0) {
         deleteObject(objectToDelete);
     }
+
+    // Ctrl+D duplicates the selected object while this panel is focused (the viewport handles it too).
+    if (objectToDuplicate < 0 && objectToDelete < 0 && m_selectedObjectIndex >= 0 && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+        objectToDuplicate = m_selectedObjectIndex;
+    }
+    if (objectToDuplicate >= 0) {
+        duplicateObject(objectToDuplicate);
+    }
     
     ImGui::Separator();
     
@@ -257,16 +302,22 @@ void Engine::renderObjectsPanel() {
         ImGui::Separator();
         
         SceneObject& obj = m_sceneObjects[m_selectedObjectIndex];
+        const SceneObject before = obj;  // how it is before anything below changes it: what Ctrl+Z goes back to
         
         char nameBuf[256];
         strncpy(nameBuf, obj.name.c_str(), sizeof(nameBuf));
         if (ImGui::InputText("Name", nameBuf, sizeof(nameBuf))) {
             obj.name = nameBuf;
         }
+        if (ImGui::IsItemActivated()) {
+            m_pendingNameEdit.fieldId = ImGui::GetItemID();
+            m_pendingNameEdit.index = m_selectedObjectIndex;
+            m_pendingNameEdit.before = std::make_shared<SceneObject>(before);
+        }
         
         // Position
         ImGui::Text("Position");
-        ImGui::PushItemWidth(ForgeEngine::UI::scaled(60.0f));
+        ImGui::PushItemWidth(PropulsionMKI::UI::scaled(60.0f));
         
         static bool posXEditing = false;
         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "X:"); ImGui::SameLine();
@@ -291,7 +342,7 @@ void Engine::renderObjectsPanel() {
         
         // Rotation
         ImGui::Text("Rotation");
-        ImGui::PushItemWidth(ForgeEngine::UI::scaled(60.0f));
+        ImGui::PushItemWidth(PropulsionMKI::UI::scaled(60.0f));
         
         static bool rotXEditing = false;
         static float rotXStart = 0.0f;
@@ -362,7 +413,7 @@ void Engine::renderObjectsPanel() {
         // Scale
         ImGui::Text("Scale");
         
-        ImGui::PushItemWidth(ForgeEngine::UI::scaled(60.0f));
+        ImGui::PushItemWidth(PropulsionMKI::UI::scaled(60.0f));
         
         // Uniform scale lock state
         static bool uniformScaleLock = false;
@@ -435,25 +486,25 @@ void Engine::renderObjectsPanel() {
         ImGui::SameLine();
         ImGui::PushFont(m_fontRegular); // Use Space Mono Regular with Font Awesome icons merged
         if (uniformScaleLock) {
-            if (ImGui::Button(ICON_FA_LOCK "##UniformScale", ImVec2(ForgeEngine::UI::scaled(30), ForgeEngine::UI::scaled(20)))) {
+            if (ImGui::Button(ICON_FA_LOCK "##UniformScale", ImVec2(PropulsionMKI::UI::scaled(30), PropulsionMKI::UI::scaled(20)))) {
                 uniformScaleLock = false;
             }
             if (ImGui::IsItemHovered()) {
-                ForgeEngine::UI::tooltip("Uniform scaling enabled. Click to unlock.");
+                PropulsionMKI::UI::tooltip("Uniform scaling enabled. Click to unlock.");
             }
         } else {
-            if (ImGui::Button(ICON_FA_UNLOCK "##UniformScale", ImVec2(ForgeEngine::UI::scaled(30), ForgeEngine::UI::scaled(20)))) {
+            if (ImGui::Button(ICON_FA_UNLOCK "##UniformScale", ImVec2(PropulsionMKI::UI::scaled(30), PropulsionMKI::UI::scaled(20)))) {
                 uniformScaleLock = true;
             }
             if (ImGui::IsItemHovered()) {
-                ForgeEngine::UI::tooltip("Uniform scaling disabled. Click to lock.");
+                PropulsionMKI::UI::tooltip("Uniform scaling disabled. Click to lock.");
             }
         }
         ImGui::PopFont();
         
         ImGui::PopItemWidth();
         
-        ImGui::Checkbox("Visible", &obj.visible);
+        if (ImGui::Checkbox("Visible", &obj.visible)) recordObjectEdit(m_selectedObjectIndex, before);
         
         ImGui::Spacing();
         ImGui::Separator();
@@ -497,12 +548,13 @@ void Engine::renderObjectsPanel() {
                     // Show thumbnail if available
                     if (m_contentItems[i].thumbnailTexture != VK_NULL_HANDLE) {
                         ImGui::Image((ImTextureID)m_contentItems[i].thumbnailTexture, 
-                                   ImVec2(ForgeEngine::UI::scaled(32), ForgeEngine::UI::scaled(32)), ImVec2(0, 0), ImVec2(1, 1));
+                                   ImVec2(PropulsionMKI::UI::scaled(32), PropulsionMKI::UI::scaled(32)), ImVec2(0, 0), ImVec2(1, 1));
                         ImGui::SameLine();
                     }
                     
-                    if (ImGui::Selectable(m_contentItems[i].name.c_str(), isSelected, 0, ImVec2(0, ForgeEngine::UI::scaled(32)))) {
+                    if (ImGui::Selectable(m_contentItems[i].name.c_str(), isSelected, 0, ImVec2(0, PropulsionMKI::UI::scaled(32)))) {
                         setInstanceMesh(obj, static_cast<int>(i));
+                        recordObjectEdit(m_selectedObjectIndex, before);
                         markProjectModified();
                     }
 
@@ -518,9 +570,10 @@ void Engine::renderObjectsPanel() {
             if (ImGui::SmallButton("Reset##Mesh")) {
                 obj.overridesMesh = false;
                 applyAssetDefaults(obj);
+                recordObjectEdit(m_selectedObjectIndex, before);
                 markProjectModified();
             }
-            if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Go back to the Object asset's mesh");
+            if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Go back to the Object asset's mesh");
         }
 
         // Material selection dropdown
@@ -544,12 +597,13 @@ void Engine::renderObjectsPanel() {
                     // Show thumbnail if available
                     if (m_contentItems[i].thumbnailTexture != VK_NULL_HANDLE) {
                         ImGui::Image((ImTextureID)m_contentItems[i].thumbnailTexture, 
-                                   ImVec2(ForgeEngine::UI::scaled(32), ForgeEngine::UI::scaled(32)), ImVec2(0, 0), ImVec2(1, 1));
+                                   ImVec2(PropulsionMKI::UI::scaled(32), PropulsionMKI::UI::scaled(32)), ImVec2(0, 0), ImVec2(1, 1));
                         ImGui::SameLine();
                     }
                     
-                    if (ImGui::Selectable(m_contentItems[i].name.c_str(), isSelected, 0, ImVec2(0, ForgeEngine::UI::scaled(32)))) {
+                    if (ImGui::Selectable(m_contentItems[i].name.c_str(), isSelected, 0, ImVec2(0, PropulsionMKI::UI::scaled(32)))) {
                         setInstanceMaterial(obj, static_cast<int>(i));
+                        recordObjectEdit(m_selectedObjectIndex, before);
                         markProjectModified();
                     }
 
@@ -565,9 +619,10 @@ void Engine::renderObjectsPanel() {
             if (ImGui::SmallButton("Reset##Material")) {
                 obj.overridesMaterial = false;
                 applyAssetDefaults(obj);
+                recordObjectEdit(m_selectedObjectIndex, before);
                 markProjectModified();
             }
-            if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Go back to the Object asset's material");
+            if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Go back to the Object asset's material");
         }
     }
     
@@ -582,12 +637,12 @@ void Engine::renderToolButtons() {
     
     // Button styling
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ForgeEngine::UI::scaled(4), ForgeEngine::UI::scaled(4)));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(PropulsionMKI::UI::scaled(4), PropulsionMKI::UI::scaled(4)));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
     
-    float buttonSize = ForgeEngine::UI::scaled(40.0f);
+    float buttonSize = PropulsionMKI::UI::scaled(40.0f);
     ImVec2 buttonSizeVec = ImVec2(buttonSize, buttonSize);
     
     // Move tool button
@@ -604,7 +659,7 @@ void Engine::renderToolButtons() {
         ImGui::PopStyleColor();
     }
     if (ImGui::IsItemHovered()) {
-        ForgeEngine::UI::tooltip("Move Tool (W)");
+        PropulsionMKI::UI::tooltip("Move Tool (W)");
     }
     
     ImGui::SameLine();
@@ -623,7 +678,7 @@ void Engine::renderToolButtons() {
         ImGui::PopStyleColor();
     }
     if (ImGui::IsItemHovered()) {
-        ForgeEngine::UI::tooltip("Rotate Tool (E)");
+        PropulsionMKI::UI::tooltip("Rotate Tool (E)");
     }
     
     ImGui::SameLine();
@@ -642,124 +697,11 @@ void Engine::renderToolButtons() {
         ImGui::PopStyleColor();
     }
     if (ImGui::IsItemHovered()) {
-        ForgeEngine::UI::tooltip("Scale Tool (R)");
+        PropulsionMKI::UI::tooltip("Scale Tool (R)");
     }
     
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar(2);
 }
 
-void Engine::renderDebugConsole() {
-    // This is now internal - called by renderDebugOutputTab
-    // Add a clear button
-    if (ImGui::Button("Clear")) {
-        m_consoleBuffer.clear();
-    }
-    
-    ImGui::SameLine();
-    if (ImGui::Button("Copy All")) {
-        std::string allText;
-        for (const auto& message : m_consoleBuffer) {
-            allText += message + "\n";
-        }
-        ImGui::SetClipboardText(allText.c_str());
-    }
-    
-    ImGui::Separator();
-    
-    // Create a scrollable text region with selectable text
-    ImGui::BeginChild("ScrollingRegion", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
-    
-    // Display all console messages as selectable text (newest at bottom)
-    for (size_t i = 0; i < m_consoleBuffer.size(); i++) {
-        // Use Selectable so user can click to select, then right-click context menu
-        if (ImGui::Selectable(m_consoleBuffer[i].c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-            // On double-click, copy this line
-            ImGui::SetClipboardText(m_consoleBuffer[i].c_str());
-        }
-    }
-    
-    // Auto-scroll to bottom to show newest messages
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f) {
-        ImGui::SetScrollHereY(1.0f);
-    }
-    
-    ImGui::EndChild();
-}
-
-void Engine::renderDebugOutputTab() {
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    float menuBarHeight = ImGui::GetFrameHeight();
-    float totalTopHeight = menuBarHeight + m_tabBarHeight;
-    float footerHeight = ImGui::GetFrameHeight();  // Footer at bottom of window
-    
-    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, viewport->Pos.y + totalTopHeight));
-    ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, viewport->Size.y - totalTopHeight - footerHeight));
-    ImGui::SetNextWindowViewport(viewport->ID);
-    
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoBringToFrontOnFocus;
-    
-    ImGui::Begin("##DebugOutputTab", nullptr, flags);
-    
-    // Header with buttons
-    if (ImGui::Button("Clear")) {
-        m_consoleBuffer.clear();
-    }
-    
-    ImGui::SameLine();
-    if (ImGui::Button("Copy All")) {
-        std::string allText;
-        for (const auto& message : m_consoleBuffer) {
-            allText += message + "\n";
-        }
-        ImGui::SetClipboardText(allText.c_str());
-    }
-    
-    ImGui::SameLine();
-    ImGui::Text("Messages: %zu", m_consoleBuffer.size());
-    
-    ImGui::Separator();
-    
-    // Scrollable region for console output
-    ImGui::BeginChild("DebugScrollRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    
-    // Track if we had messages before to detect new ones
-    static size_t lastMessageCount = 0;
-    bool hasNewMessages = m_consoleBuffer.size() > lastMessageCount;
-    lastMessageCount = m_consoleBuffer.size();
-    
-    // Display messages (newest at bottom - natural order)
-    for (size_t i = 0; i < m_consoleBuffer.size(); i++) {
-        ImGui::TextUnformatted(m_consoleBuffer[i].c_str());
-    }
-    
-    // Auto-scroll to bottom when new messages arrive or when already at bottom
-    if (hasNewMessages || ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
-        ImGui::SetScrollHereY(1.0f);
-    }
-    
-    ImGui::EndChild();
-    
-    ImGui::End();
-}
-
-void Engine::openDebugOutputTab() {
-    // Check if Debug Output tab already exists
-    for (size_t t = 0; t < m_tabs.size(); t++) {
-        if (m_tabs[t].type == TabType::DebugOutput) {
-            // Tab exists, just select it
-            m_activeTabIndex = static_cast<int>(t);
-            m_tabs[t].needsSelection = true;
-            return;
-        }
-    }
-    
-    // Create new Debug Output tab
-    Tab newTab("Debug Output", TabType::DebugOutput);
-    m_tabs.push_back(newTab);
-    m_activeTabIndex = static_cast<int>(m_tabs.size() - 1);
-}
-
-} // namespace Forge
+} // namespace Propulsion

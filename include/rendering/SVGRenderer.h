@@ -5,7 +5,7 @@
 #include <lunasvg.h>
 #include <vulkan/vulkan.h>
 
-namespace Forge {
+namespace Propulsion {
 
 class SVGRenderer {
 public:
@@ -40,4 +40,4 @@ private:
     void cleanupTexture();
 };
 
-} // namespace Forge
+} // namespace Propulsion

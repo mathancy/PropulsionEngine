@@ -8,12 +8,17 @@
 #include <array>
 #include <memory>
 
-namespace Forge {
+namespace Propulsion {
 
-Shader::Shader(VulkanContext* context, const char* vertexPath, const char* fragmentPath, VkRenderPass renderPass, VkCullModeFlags cullMode, bool depthTestEnable, bool supportsTextures)
+Shader::Shader(VulkanContext* context, const char* vertexPath, const char* fragmentPath, VkRenderPass renderPass, VkCullModeFlags cullMode, bool depthTestEnable, bool supportsTextures, VkDescriptorSetLayout extraSetLayout, VkDescriptorSetLayout bindlessSetLayout)
     : m_context(context), m_pipeline(VK_NULL_HANDLE), m_pipelineLayout(VK_NULL_HANDLE), 
-      m_descriptorSetLayout(VK_NULL_HANDLE), m_cullMode(cullMode), m_depthTestEnable(depthTestEnable),
+      m_descriptorSetLayout(VK_NULL_HANDLE), m_extraSetLayout(extraSetLayout), m_cullMode(cullMode), m_depthTestEnable(depthTestEnable),
       m_usesPushConstants(false), m_supportsTextures(supportsTextures) {
+    if (bindlessSetLayout != VK_NULL_HANDLE) {
+        if (extraSetLayout == VK_NULL_HANDLE) throw std::runtime_error("A shader with a texture table needs the lighting set too");
+        m_bindlessSetLayout = bindlessSetLayout;
+        m_dynamicCull = true;
+    }
     
     if (m_supportsTextures) {
         createDefaultTexture();
@@ -73,6 +78,7 @@ Shader::~Shader() {
     }
     
     vkDestroyDescriptorSetLayout(device, m_descriptorSetLayout, nullptr);
+    for (VkPipeline variant : m_variants) vkDestroyPipeline(device, variant, nullptr);
     vkDestroyPipeline(device, m_pipeline, nullptr);
     vkDestroyPipelineLayout(device, m_pipelineLayout, nullptr);
 }
@@ -164,7 +170,19 @@ void Shader::createTexturedDescriptorSetLayout() {
     }
 }
 
-void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::string& fragmentPath, VkRenderPass renderPass) {
+int Shader::addVariant(const std::string& fragmentPath, VkRenderPass renderPass, bool blended) {
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    createGraphicsPipeline(m_vertexPath, fragmentPath, renderPass, &pipeline, blended);
+    m_variants.push_back(pipeline);
+    return static_cast<int>(m_variants.size());
+}
+
+void Shader::setCullMode(VkCommandBuffer commandBuffer, bool twoSided) const {
+    if (m_dynamicCull) vkCmdSetCullMode(commandBuffer, twoSided ? VK_CULL_MODE_NONE : m_cullMode);
+}
+
+void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::string& fragmentPath, VkRenderPass renderPass, VkPipeline* variantOut, bool blended) {
+    m_vertexPath = vertexPath;
     CrashHandler::logInfo("Loading vertex shader: " + vertexPath);
     auto vertShaderCode = readFile(vertexPath);
     CrashHandler::logInfo("Vertex shader size: " + std::to_string(vertShaderCode.size()) + " bytes");
@@ -242,7 +260,7 @@ void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::st
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = m_depthTestEnable ? VK_TRUE : VK_FALSE;
-    depthStencil.depthWriteEnable = m_depthTestEnable ? VK_TRUE : VK_FALSE;
+    depthStencil.depthWriteEnable = (m_depthTestEnable && !blended) ? VK_TRUE : VK_FALSE;  // see-through surfaces test depth but don't hide what is behind
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
     depthStencil.depthBoundsTestEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
@@ -250,7 +268,14 @@ void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::st
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | 
                                           VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
+    colorBlendAttachment.blendEnable = blended ? VK_TRUE : VK_FALSE;
+    // The shader's colour is already multiplied by its alpha: add it to what is behind, which is dimmed by the alpha
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;  // the picture's own alpha stays as it was
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -260,10 +285,13 @@ void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::st
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_descriptorSetLayout;
+    // Set 0 is the shader's own (per-object uniforms and textures); set 1, if there is one, is the lighting.
+    // Set 2, if there is one, is the table of every material texture.
+    VkDescriptorSetLayout setLayouts[3] = {m_descriptorSetLayout, m_extraSetLayout, m_bindlessSetLayout};
+    pipelineLayoutInfo.setLayoutCount = (m_bindlessSetLayout != VK_NULL_HANDLE) ? 3 : (m_extraSetLayout != VK_NULL_HANDLE) ? 2 : 1;
+    pipelineLayoutInfo.pSetLayouts = setLayouts;
 
-    if (vkCreatePipelineLayout(m_context->getDevice(), &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS) {
+    if (!variantOut && vkCreatePipelineLayout(m_context->getDevice(), &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("Failed to create pipeline layout!");
     }
 
@@ -272,6 +300,7 @@ void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::st
         VK_DYNAMIC_STATE_VIEWPORT,
         VK_DYNAMIC_STATE_SCISSOR
     };
+    if (m_dynamicCull) dynamicStates.push_back(VK_DYNAMIC_STATE_CULL_MODE);
 
     VkPipelineDynamicStateCreateInfo dynamicState{};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
@@ -295,7 +324,11 @@ void Shader::createGraphicsPipeline(const std::string& vertexPath, const std::st
     pipelineInfo.subpass = 0;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
-    if (vkCreateGraphicsPipelines(m_context->getDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pipeline) != VK_SUCCESS) {
+    VkPipeline* target = variantOut ? variantOut : &m_pipeline;
+    const VkResult created = vkCreateGraphicsPipelines(m_context->getDevice(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, target);
+    if (created != VK_SUCCESS) {
+        vkDestroyShaderModule(m_context->getDevice(), fragShaderModule, nullptr);
+        vkDestroyShaderModule(m_context->getDevice(), vertShaderModule, nullptr);
         throw std::runtime_error("Failed to create graphics pipeline!");
     }
 
@@ -676,8 +709,9 @@ void Shader::unbindAllTextures(uint32_t currentFrame) {
     }
 }
 
-void Shader::bind(VkCommandBuffer commandBuffer) {
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+void Shader::bind(VkCommandBuffer commandBuffer, int variant) {
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, hasVariant(variant) ? m_variants[variant - 1] : m_pipeline);
+    if (m_dynamicCull) vkCmdSetCullMode(commandBuffer, m_cullMode);  // the normal faces; a two-sided draw says so with setCullMode
     
     // Bind descriptor sets containing uniform buffers (MVP matrices and color)
     uint32_t currentFrame = m_context->getCurrentFrame();
@@ -1032,4 +1066,4 @@ void Shader::resetObjectIndex() {
     m_objectIndex = 0;
 }
 
-} // namespace Forge
+} // namespace Propulsion

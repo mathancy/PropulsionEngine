@@ -1,7 +1,7 @@
-# Vulkan Migration Guide for ForgeEngine
+# Vulkan Migration Guide for PropulsionMKI
 
 ## Overview
-This document outlines the migration of ForgeEngine from OpenGL to Vulkan.
+This document outlines the migration of PropulsionMKI from OpenGL to Vulkan.
 
 ## Completed Changes
 

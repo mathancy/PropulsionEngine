@@ -1,0 +1,29 @@
+// hud.prop: on-screen coin counter and temporary messages.
+
+header:
+	needs system:UI
+
+	variable name:CoinCount type:integer
+	variable name:MessageTimer type:timer
+	variable name:MessageVisible type:boolean
+
+implement:
+	every frame:
+		if MessageVisible is true and MessageTimer is above 3 seconds:
+			// CHANGED: "UI.Hide" is now "do Hide on UI".
+			do Hide on UI element:"message"
+			make MessageVisible false
+
+	action ShowCoins count:integer:
+		make CoinCount count
+		// CHANGED: "UI.SetText" is now "do SetText on UI", and ("Coins: " + text of count) is now "Coins: " joined with count.
+		do SetText on UI element:"coins" text:"Coins: " joined with count
+
+	action ShowMessage text:text:
+		do SetText on UI element:"message" text:text
+		do Show on UI element:"message"
+		make MessageVisible true
+		reset MessageTimer
+
+	action Flash:
+		do Play on UI animation:"flash"

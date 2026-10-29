@@ -1,7 +1,0 @@
-[package]
-name = "forge"
-version = "0.1.0"
-edition = "2021"
-description = "ForgeScript language front end: lexer, parser, and checks"
-
-[dependencies]

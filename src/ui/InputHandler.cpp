@@ -8,7 +8,7 @@
 #undef min  // Prevent Windows.h min macro from conflicting with std::min
 #endif
 
-namespace Forge {
+namespace Propulsion {
 
 #ifdef _WIN32
 // Forward declarations for file dialog functions (defined in Engine.cpp)
@@ -19,15 +19,11 @@ extern std::string showOpenFileDialog(GLFWwindow* window);
 void Engine::processInput(float deltaTime) {
     GLFWwindow* window = m_window->getNativeWindow();
     
-    // Escape ends Play mode first; it only closes the editor when nothing is playing.
+    // Escape ends Play mode. It never closes the editor.
     static bool escapeWasPressed = false;
     bool escapePressed = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
-    if (escapePressed && !escapeWasPressed) {
-        if (m_isPlaying)
-            stopPlay();
-        else
-            glfwSetWindowShouldClose(window, true);
-    }
+    if (escapePressed && !escapeWasPressed && m_isPlaying)
+        stopPlay();
     escapeWasPressed = escapePressed;
     
     // Undo/Redo shortcuts
@@ -42,14 +38,16 @@ void Engine::processInput(float deltaTime) {
     static bool oKeyWasPressed = false;
     static bool sKeyWasPressed = false;
     static bool f3KeyWasPressed = false;
-    
+    static bool f4KeyWasPressed = false;
+
     bool zKeyPressed = glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS;
     bool yKeyPressed = glfwGetKey(window, GLFW_KEY_Y) == GLFW_PRESS;
     bool nKeyPressed = glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS;
     bool oKeyPressed = glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS;
     bool sKeyPressed = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
     bool f3KeyPressed = glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS;
-    
+    bool f4KeyPressed = glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS;
+
     // Undo (Ctrl+Z) and redo (Ctrl+Y, or Ctrl+Shift+Z). Not while typing in a text field, which has its own.
     const bool typingText = ImGui::GetIO().WantTextInput;
     if (ctrlPressed && zKeyPressed && !zKeyWasPressed && !typingText) {
@@ -91,6 +89,12 @@ void Engine::processInput(float deltaTime) {
         m_showFPS = !m_showFPS;
     }
     f3KeyWasPressed = f3KeyPressed;
+
+    // Toggle the collision shape overlay
+    if (f4KeyPressed && !f4KeyWasPressed) {
+        m_showCollisionShapes = !m_showCollisionShapes;
+    }
+    f4KeyWasPressed = f4KeyPressed;
     
     // Delete removes the selected object (when the viewport is focused, and not while typing or playing)
     {
@@ -103,6 +107,17 @@ void Engine::processInput(float deltaTime) {
         deleteWasPressed = deletePressed;
     }
     
+    // Ctrl+D duplicates the selected object (when the viewport is focused, and not while typing or playing)
+    {
+        static bool dWasPressed = false;
+        bool dPressed = glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+        if (ctrlPressed && dPressed && !dWasPressed && m_selectedObjectIndex >= 0 && m_viewportFocused &&
+            !m_isPlaying && !m_rightMousePressed && !ImGui::GetIO().WantTextInput) {
+            duplicateObject(m_selectedObjectIndex);
+        }
+        dWasPressed = dPressed;
+    }
+
     // Gizmo tool shortcuts (only when object is selected and viewport is focused)
     // (not while playing: W/E/R/etc. belong to the game then)
     if (m_selectedObjectIndex >= 0 && m_viewportFocused && !m_isPlaying) {
@@ -161,7 +176,8 @@ void Engine::onMouseButton(int button, int action, int mods) {
         if (action == GLFW_PRESS) {
             // Only activate camera control if we're hovering over the viewport
             // and we're on the Scene tab
-            if (m_viewportHovered && m_activeTabIndex == 0) {
+            // (no editor fly camera while playing)
+            if (m_viewportHovered && m_activeTabIndex == 0 && !m_isPlaying) {
                 m_rightMousePressed = true;
                 glfwSetInputMode(m_window->getNativeWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
                 m_firstMouse = true;
@@ -380,7 +396,7 @@ void Engine::checkViewportClick() {
         m_selectedObjectIndex = closestObject;
         char debugMsg[256];
         snprintf(debugMsg, sizeof(debugMsg), "Selected: %s", m_sceneObjects[closestObject].name.c_str());
-        m_consoleBuffer.push_back(debugMsg);
+        OutputLog::verbose(LogCategory::Editor, debugMsg);
     } else {
         m_selectedObjectIndex = -1;
         m_gizmoMode = GizmoMode::None; // Deselect also resets gizmo
@@ -389,14 +405,16 @@ void Engine::checkViewportClick() {
 
 bool Engine::rayCastObject(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const SceneObject& obj, float& distance) {
     // Get the mesh for this object to get its actual bounds
+    // An object with no mesh has nothing to see, but it still has to be clickable (a camera on its own, say), so it
+    // is given a small box around its origin.
     Mesh* mesh = getMeshForObject(obj);
-    if (!mesh) {
-        return false;
+    glm::vec3 localMin(-0.5f), localMax(0.5f);
+    if (mesh) {
+        localMin = mesh->getBoundsMin();
+        localMax = mesh->getBoundsMax();
     }
     
     // Get the mesh's local bounds
-    glm::vec3 localMin = mesh->getBoundsMin();
-    glm::vec3 localMax = mesh->getBoundsMax();
     
     // Build the object's model matrix (same as in rendering)
     glm::mat4 model = glm::mat4(1.0f);
@@ -454,37 +472,26 @@ bool Engine::rayCastObject(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
 }
 
 Mesh* Engine::getMeshForObject(const SceneObject& obj) const {
-    // First try GUID-based lookup (stable across rescans)
+    // The mesh an object is drawn with, or null if it has none: an object with no mesh set draws nothing.
     if (!obj.meshGUID.empty()) {
-        for (const auto& meshItem : m_contentItems) {
-            if (meshItem.type == "Mesh" && meshItem.id == obj.meshGUID) {
-                if (meshItem.name == "Sphere") return m_sphere.get();
-                else if (meshItem.name == "Cylinder") return m_cylinder.get();
-                else if (meshItem.name == "Cube") return m_cube.get();
-                // TODO: Support custom meshes
-                break;
-            }
-        }
+        // meshByGUID is null if that mesh isn't in the project (any more).
+        return meshByGUID(obj.meshGUID);
     }
-    
-    // Legacy fallback: index-based lookup
+
+    // No mesh is set. An object placed from an Object asset follows the asset, so no mesh there means none here.
+    if (sourceAssetOf(obj)) return nullptr;
+
+    // An object that isn't tied to an asset (the scene's starting cube, or a project from before Object assets)
+    // keeps the older rules: its mesh index, then its name, then a cube.
     if (obj.meshIndex >= 0 && obj.meshIndex < static_cast<int>(m_contentItems.size())) {
         const auto& meshItem = m_contentItems[obj.meshIndex];
-        if (meshItem.name == "Sphere") {
-            return m_sphere.get();
-        } else if (meshItem.name == "Cylinder") {
-            return m_cylinder.get();
-        }
+        if (meshItem.name == "Sphere") return m_sphere.get();
+        if (meshItem.name == "Cylinder") return m_cylinder.get();
     } else {
-        // Last resort fallback: check object name
-        if (obj.name.find("Sphere") != std::string::npos) {
-            return m_sphere.get();
-        } else if (obj.name.find("Cylinder") != std::string::npos) {
-            return m_cylinder.get();
-        }
+        if (obj.name.find("Sphere") != std::string::npos) return m_sphere.get();
+        if (obj.name.find("Cylinder") != std::string::npos) return m_cylinder.get();
     }
-    // Default to cube
     return m_cube.get();
 }
 
-} // namespace Forge
+} // namespace Propulsion

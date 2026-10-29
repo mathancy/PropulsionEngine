@@ -9,13 +9,13 @@
  * draws what it holds; the script editor decides when the text is good enough to be saved.
  *
  * Columns are byte offsets into a line and always sit on a character boundary (the text is UTF-8).
- * ForgeScript indents with tabs only, so Tab inserts one and Enter keeps the line's indent.
+ * PropulsionScript indents with tabs only, so Tab inserts one and Enter keeps the line's indent.
  */
 
 #include <string>
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 
 /// How many columns a tab is drawn as.
 constexpr int kCodeTabColumns = 2;
@@ -116,4 +116,4 @@ private:
     bool m_breakRun = false;
 };
 
-} // namespace Forge
+} // namespace Propulsion

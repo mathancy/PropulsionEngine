@@ -1,4 +1,10 @@
-#version 450
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// The lights and the environment come from the lighting set (see SceneLighting).
+#define LIGHTING_SET 1
+#include "lighting.glsl"
 
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec3 fragColor;
@@ -24,16 +30,18 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 heightParams;          // x=heightScale, y=invertHeight, z=unused, w=unused
     vec3 cameraPos;             // Camera position for specular calculations
     float padding;
+    ivec4 textureSlots;         // places in the texture table: x=base colour, y=metallic, z=roughness, w=normal (the flags say which are used)
+    ivec4 textureSlots2;        // x=occlusion, y=emissive, z=height, w=opacity (-1: none)
+    vec4 surfaceParams;         // x=blend mode (0 opaque, 1 masked, 2 translucent), y=opacity, z=mask cutoff, w=1 if two sided
 } ubo;
 
-// PBR texture samplers
-layout(binding = 1) uniform sampler2D albedoTexture;
-layout(binding = 2) uniform sampler2D metallicTexture;
-layout(binding = 3) uniform sampler2D roughnessTexture;
-layout(binding = 4) uniform sampler2D normalTexture;
-layout(binding = 5) uniform sampler2D aoTexture;
-layout(binding = 6) uniform sampler2D emissiveTexture;
-layout(binding = 7) uniform sampler2D heightTexture;
+// Every material texture, in one array (see rendering/TextureTable.h). The object's block says which slots it uses. Colours (base
+// colour, emissive) are read through slots whose image is decoded from sRGB; data (everything else) through slots that are read as stored.
+layout(set = 2, binding = 0) uniform sampler2D textures[];
+
+vec4 sampleSlot(int slot, vec2 uv) {
+    return texture(textures[nonuniformEXT(slot)], uv);
+}
 
 const float PI = 3.14159265359;
 
@@ -96,7 +104,7 @@ mat3 cotangentFrame(vec3 N, vec3 p, vec2 uv) {
 }
 
 vec3 perturbNormal(vec3 N, vec3 V, vec2 texcoord, float strength, bool invert) {
-    vec3 map = texture(normalTexture, texcoord).xyz;
+    vec3 map = sampleSlot(ubo.textureSlots.w, texcoord).xyz;
     map = map * 2.0 - 1.0;
     
     // Invert normal map (flip green channel for DirectX/OpenGL convention swap)
@@ -120,7 +128,7 @@ vec2 parallaxMapping(vec2 texCoords, vec3 viewDir, float heightScale, bool inver
     float actualScale = heightScale * 0.02;
     
     // Sample height map
-    float height = texture(heightTexture, texCoords).r;
+    float height = sampleSlot(ubo.textureSlots2.z, texCoords).r;
     if (invertHeight) {
         height = 1.0 - height;
     }
@@ -135,6 +143,9 @@ vec2 parallaxMapping(vec2 texCoords, vec3 viewDir, float heightScale, bool inver
 void main() {
     // Calculate view direction for parallax mapping
     vec3 N = normalize(fragNormal);
+    // A two-sided surface seen from behind faces the other way
+    if (ubo.surfaceParams.w > 0.5 && !gl_FrontFacing) N = -N;
+    vec3 Ngeo = N;  // the surface itself (before a normal map), for shadows
     vec3 V = normalize(ubo.cameraPos - fragWorldPos);
     
     // Apply parallax mapping if height texture is enabled
@@ -158,7 +169,7 @@ void main() {
     // Sample albedo (base color)
     vec3 albedo;
     if (ubo.textureFlags.x > 0.5) {
-        albedo = pow(texture(albedoTexture, texCoord).rgb, vec3(2.2)); // sRGB to linear
+        albedo = sampleSlot(ubo.textureSlots.x, texCoord).rgb;  // already decoded from sRGB by the texture's view
     } else {
         albedo = pow(fragColor, vec3(2.2)); // sRGB to linear
     }
@@ -166,7 +177,7 @@ void main() {
     // Sample metallic
     float metallic;
     if (ubo.textureFlags.y > 0.5) {
-        metallic = texture(metallicTexture, texCoord).r;
+        metallic = sampleSlot(ubo.textureSlots.y, texCoord).r;
         if (ubo.invertFlags.x > 0.5) {
             metallic = 1.0 - metallic;
         }
@@ -179,7 +190,7 @@ void main() {
     // Sample roughness
     float roughness;
     if (ubo.textureFlags.z > 0.5) {
-        roughness = texture(roughnessTexture, texCoord).r;
+        roughness = sampleSlot(ubo.textureSlots.z, texCoord).r;
         if (ubo.invertFlags.y > 0.5) {
             roughness = 1.0 - roughness;
         }
@@ -193,7 +204,7 @@ void main() {
     // Sample ambient occlusion
     float ao;
     if (ubo.textureFlags2.x > 0.5) {
-        ao = texture(aoTexture, texCoord).r;
+        ao = sampleSlot(ubo.textureSlots2.x, texCoord).r;
         if (ubo.invertFlags.w > 0.5) {
             ao = 1.0 - ao;
         }
@@ -215,59 +226,126 @@ void main() {
     // For dielectrics use 0.04, for metals use albedo color
     vec3 F0 = vec3(0.04);
     F0 = mix(F0, albedo, metallic);
+    float NdotV = max(dot(N, V), 0.0001);
 
-    // Reflectance equation
-    vec3 Lo = vec3(0.0);
+    // How much of the surface is there (masked: a point is either there or not) and how much light it stops (translucent).
+    // The alpha comes from the Opacity texture, else from the base colour texture's alpha channel.
+    const int blendMode = int(ubo.surfaceParams.x + 0.5);
+    float alpha = 1.0;
+    if (blendMode != 0) {
+        if (ubo.textureSlots2.w >= 0) alpha = sampleSlot(ubo.textureSlots2.w, texCoord).r;
+        else if (ubo.textureFlags.x > 0.5) alpha = sampleSlot(ubo.textureSlots.x, texCoord).a;
+        if (blendMode == 1) {
+            if (alpha < ubo.surfaceParams.z) discard;  // cut away: not drawn, not in the depth, seen through
+            alpha = 1.0;
+        } else {
+            alpha *= ubo.surfaceParams.y;
+        }
+    }
 
-    // Main directional light
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    vec3 lightColor = vec3(1.0, 0.98, 0.95) * 3.0; // Slightly warm, bright
+    // Reflectance equation: every light in the scene (or the default rig when it has none)
+    vec3 LoDiffuse = vec3(0.0);   // the light the surface scatters (stopped by a translucent surface's opacity)
+    vec3 LoSpecular = vec3(0.0);  // the light it reflects (a glass surface reflects however clear it is)
+    int lightCount = int(lighting.envParams.w);
+    for (int i = 0; i < lightCount && i < MAX_LIGHTS; i++) {
+        Light light = lighting.lights[i];
+        vec3 L;
+        vec3 radiance = light.colorRange.rgb;
+        if (light.posType.w < 0.5) {
+            // Directional: the same everywhere
+            L = normalize(light.posType.xyz);
+        } else {
+            // Point: falls off with the square of the distance, and is gone at its range
+            vec3 toLight = light.posType.xyz - fragWorldPos;
+            float dist2 = max(dot(toLight, toLight), 0.0001);
+            L = toLight * inversesqrt(dist2);
+            float attenuation = 1.0 / dist2;
+            float range = light.colorRange.w;
+            if (range > 0.0) {
+                float r2 = dist2 / (range * range);
+                float window = clamp(1.0 - r2 * r2, 0.0, 1.0);
+                attenuation *= window * window;
+            }
+            radiance *= attenuation;
+        }
 
-    vec3 L = lightDir;
-    vec3 H = normalize(V + L);
-    
-    // Cook-Torrance BRDF
-    float NDF = DistributionGGX(N, H, roughness);
-    float G = GeometrySmith(N, V, L, roughness);
-    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL <= 0.0) continue;
 
-    vec3 numerator = NDF * G * F;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    vec3 specular = numerator / denominator;
+        // Shadows (only lights that were given a shadow map)
+        if (light.params.y > -0.5) {
+            float rotation = shadowNoise(gl_FragCoord.xy) * 6.2831853;
+            float visibility;
+#ifdef HYBRID_RT
+            visibility = rtLightVisibility(light, fragWorldPos, Ngeo, rotation + float(i) * 2.399963);
+#else
+            if (light.posType.w < 0.5) {
+                visibility = sunShadow(fragWorldPos, Ngeo, L, light.params.z, rotation, -(ubo.view * vec4(fragWorldPos, 1.0)).z);
+            } else {
+                visibility = pointLightShadow(int(light.params.y + 0.5), light.posType.xyz, light.params.w, light.params.z, fragWorldPos, Ngeo, L, rotation);
+            }
+#endif
+            radiance *= visibility;
+        }
 
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
+        vec3 H = normalize(V + L);
 
-    float NdotL = max(dot(N, L), 0.0);
+        // Cook-Torrance BRDF
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
-    Lo += (kD * albedo / PI + specular) * lightColor * NdotL;
+        vec3 numerator = NDF * G * F;
+        float denominator = 4.0 * NdotV * NdotL + 0.0001;
+        vec3 specular = numerator / denominator * light.params.x;
 
-    // Fill light (softer, from opposite direction)
-    vec3 fillLightDir = normalize(vec3(-0.3, 0.5, -0.5));
-    vec3 fillLightColor = vec3(0.4, 0.5, 0.6) * 0.5; // Cool fill
+        vec3 kS = F;
+        vec3 kD = vec3(1.0) - kS;
+        kD *= 1.0 - metallic;
 
-    vec3 L2 = fillLightDir;
-    vec3 H2 = normalize(V + L2);
-    float NdotL2 = max(dot(N, L2), 0.0);
-    
-    // Simplified fill (just diffuse)
-    Lo += kD * albedo / PI * fillLightColor * NdotL2;
+        LoDiffuse += kD * albedo / PI * radiance * NdotL;
+        LoSpecular += specular * radiance * NdotL;
+    }
 
-    // Ambient lighting (simple hemisphere approximation)
-    vec3 ambient = vec3(0.03) * albedo * ao;
+    // Image-based lighting: the sky lights the surface from every direction (diffuse), and shiny surfaces reflect it
+    vec3 Fr = F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
+    vec3 kDEnv = (vec3(1.0) - Fr) * (1.0 - metallic);
+    vec3 diffuseIBL = envIrradiance(N) * albedo * kDEnv;
+
+    vec3 R = reflect(-V, N);
+    vec3 reflected = envRadiance(R, roughness * lighting.envParams.z);
+    vec3 specularIBL = reflected * envBrdfApprox(F0, roughness, NdotV);
+
+    // Occlusion dims the sky's diffuse light fully, and its reflections a little less (Lagarde's specular occlusion)
+    float specularAO = clamp(pow(NdotV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+    // Ambient occlusion from the depth buffer (white where there is none)
+#ifdef HYBRID_RT
+    // Hybrid RT: occlusion from rays, where the normal view reads the depth-based one
+    float screenOcclusion = rtAmbientOcclusion(fragWorldPos, Ngeo, shadowNoise(gl_FragCoord.xy + vec2(17.0, 3.0)) * 6.2831853);
+#else
+    float screenOcclusion = texture(aoMap, gl_FragCoord.xy / vec2(textureSize(aoMap, 0))).r;
+#endif
+    vec3 ambientDiffuse = diffuseIBL * ao * screenOcclusion;
+    vec3 ambientSpecular = specularIBL * specularAO * screenOcclusion;
 
     // Add emissive
     vec3 emissive = vec3(0.0);
     if (ubo.textureFlags2.y > 0.5) {
         // Emissive from texture, use emissiveColor.a as strength multiplier
-        emissive = pow(texture(emissiveTexture, texCoord).rgb, vec3(2.2)) * ubo.emissiveColor.a;
+        emissive = sampleSlot(ubo.textureSlots2.y, texCoord).rgb * ubo.emissiveColor.a;
     } else if (length(ubo.emissiveColor.rgb) > 0.001) {
         // Emissive from solid color (emissiveColor.a not used here, color is already the desired intensity)
         emissive = pow(ubo.emissiveColor.rgb, vec3(2.2));
     }
 
-    vec3 color = ambient + Lo + emissive;
+    // A translucent surface is blended over what is behind it with its colour already multiplied by the opacity (so reflections
+    // keep their strength); everything else is just added up.
+    vec3 color;
+    if (blendMode == 2) {
+        color = (ambientDiffuse + LoDiffuse + emissive) * alpha + ambientSpecular + LoSpecular;
+    } else {
+        color = ambientDiffuse + ambientSpecular + LoDiffuse + LoSpecular + emissive;
+    }
 
     // Apply exposure
     color *= fragExposure;
@@ -278,5 +356,5 @@ void main() {
     // Gamma correction
     color = pow(color, vec3(1.0 / 2.2));
 
-    outColor = vec4(color, 1.0);
+    outColor = vec4(color, blendMode == 2 ? alpha : 1.0);
 }

@@ -13,7 +13,7 @@
  *   - far right, when the Code button is on: the script's text, read-only, linked to the nodes;
  *   - under the graph: Compiler Results, after Compile.
  * Changing a variable here edits the script's header through the same edits as the graph does (see
- * forge_graph_edit), so it is undoable.
+ * propulsion_graph_edit), so it is undoable.
  *
  * Every size is a multiple of the current font height, so the panels follow File > Preferences >
  * UI Scaling (fonts and spacing are scaled by the theme; nothing here is in fixed pixels).
@@ -33,7 +33,7 @@
 
 #include <imgui_internal.h>  // ImGui::GetActiveID: which text field is being typed in
 
-namespace Forge {
+namespace Propulsion {
 
 namespace {
 
@@ -59,6 +59,7 @@ ImU32 componentColor(const std::string& name) {
     if (name == "Transform") return IM_COL32(235, 150, 60, 255);
     if (name == "Mesh") return IM_COL32(80, 160, 235, 255);
     if (name == "Material") return IM_COL32(210, 95, 125, 255);
+    if (name == "Camera") return IM_COL32(90, 165, 255, 255);
     return IM_COL32(160, 160, 170, 255);
 }
 
@@ -307,7 +308,7 @@ void ScriptGraphEditor::drawCompileStatus() {
     if (ImGui::SmallButton("Compile")) m_pending.push_back([this]() { compile(); });
     ImGui::PopStyleColor(3);
     m_compileButton = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Check this script the way Play will, and list everything that would make it fail (F7)");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Check this script the way Play will, and list everything that would make it fail (F7)");
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(tint.x + 0.35f, tint.y + 0.35f, tint.z + 0.35f, 1.0f), "%s", status.c_str());
 }
@@ -359,7 +360,7 @@ void ScriptGraphEditor::drawCompileResults(float height) {
     for (const Problem& p : m_compile.problems) {
         const std::string id = "##problem" + std::to_string(index++);
         if (panelRow(id.c_str(), p.error ? IM_COL32(235, 75, 75, 255) : IM_COL32(235, 190, 70, 255), false, p.message, "", false, 0.0f)) selectProblem(p);
-        if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("%s\n(click to go to it)", p.message.c_str());
+        if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("%s\n(click to go to it)", p.message.c_str());
     }
     ImGui::EndChild();
 }
@@ -375,6 +376,15 @@ const ScriptGraphEditor::ComponentInfo* ScriptGraphEditor::componentNamed(const 
     return nullptr;
 }
 
+void ScriptGraphEditor::selectComponent(const std::string& name) {
+    m_selectedComponent = name;
+    m_focus = Focus::Component;
+    m_selectedVar.clear();
+    m_selectedRef.clear();
+    m_selectedKey.clear();
+    m_graph.clearSelection();
+}
+
 void ScriptGraphEditor::drawComponentsPanel() {
     panelTitle("COMPONENTS");
     ImGui::Separator();
@@ -386,31 +396,29 @@ void ScriptGraphEditor::drawComponentsPanel() {
         return;
     }
 
-    auto select = [&](const std::string& name) {
-        m_selectedComponent = name;
-        m_focus = Focus::Component;
-        m_selectedVar.clear();
-        m_selectedRef.clear();
-        m_selectedKey.clear();
-        m_graph.clearSelection();
-    };
+    auto select = [&](const std::string& name) { selectComponent(name); };
 
     // The Object, then its Mesh, and under the Mesh its Material and its Transform (where the mesh sits,
     // measured from the Object's anchor).
     if (panelRow("##component_object", componentColor("@object"), false, m_objectName, "Object", m_selectedComponent == "@object", 0.0f)) select("@object");
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("The Object asset this script belongs to. Its anchor is where it is placed in a level.");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("The Object asset this script belongs to. Its anchor is where it is placed in a level.");
 
     for (const ComponentInfo& c : m_components) {
         if (!c.parent.empty()) continue;
         const std::string id = "##component_" + c.name;
         if (panelRow(id.c_str(), componentColor(c.name), false, c.name, c.detail, m_selectedComponent == c.name, 1.0f)) select(c.name);
-        if (ImGui::IsItemHovered() && !c.note.empty()) ForgeEngine::UI::tooltip("%s", c.note.c_str());
+        if (ImGui::IsItemHovered() && !c.note.empty()) PropulsionMKI::UI::tooltip("%s", c.note.c_str());
         for (const ComponentInfo& child : m_components) {
             if (child.parent != c.name) continue;
             const std::string childId = "##component_" + child.name;
             if (panelRow(childId.c_str(), componentColor(child.name), false, child.name, child.detail, m_selectedComponent == child.name, 2.0f)) select(child.name);
-            if (ImGui::IsItemHovered() && !child.note.empty()) ForgeEngine::UI::tooltip("%s", child.note.c_str());
+            if (ImGui::IsItemHovered() && !child.note.empty()) PropulsionMKI::UI::tooltip("%s", child.note.c_str());
         }
+    }
+
+    if (m_addComponent) {
+        ImGui::Spacing();
+        m_addComponent();
     }
 
     if (m_sharedBy > 1) {
@@ -482,7 +490,7 @@ void ScriptGraphEditor::drawVariablesPanel() {
     ImGui::SameLine(ImGui::GetContentRegionMax().x - addWidth);
     if (ImGui::Button(addLabel)) m_pending.push_back([this]() { addVariable(); });
     m_addButton = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Declare a new variable in this script's header");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Declare a new variable in this script's header");
     ImGui::Separator();
 
     if (m_vars.empty()) {
@@ -504,14 +512,60 @@ void ScriptGraphEditor::drawVariablesPanel() {
         m_variableRows[v.name] = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
         // Drag it onto a node's field to plug it in, or onto the canvas for a Get node.
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            ImGui::SetDragDropPayload("FORGE_VARIABLE", v.name.c_str(), v.name.size() + 1);
+            ImGui::SetDragDropPayload("PROPULSION_VARIABLE", v.name.c_str(), v.name.size() + 1);
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(typeColor(v.type)), "%s", v.name.c_str());
             ImGui::TextDisabled("%s: drop it on a field", v.type.c_str());
             ImGui::EndDragDropSource();
         } else if (ImGui::IsItemHovered()) {
-            ForgeEngine::UI::tooltip("%s\nDrag it onto a node's field to plug it in.", v.text.c_str());
+            PropulsionMKI::UI::tooltip("%s\nDrag it onto a node's field to plug it in.", v.text.c_str());
         }
     }
+
+    // Local Variables: the names Set Local nodes make inside handlers and actions. They are not declared in the header
+    // and only exist from their node to the end of its block, so they are listed apart, under the handler they are in.
+    m_localRows.clear();
+    ImGui::Spacing();
+    char title[48];
+    std::snprintf(title, sizeof(title), "Local Variables (%d)###locals", static_cast<int>(m_locals.size()));
+    const bool open = ImGui::TreeNodeEx(title, ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen);
+    m_localsHeader = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Names made by a Set Local node (remember). Each one exists from its node to the end of the block it is in.");
+    if (!open) return;
+    if (m_locals.empty()) {
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("None yet. A Set Local node makes one.");
+        ImGui::PopTextWrapPos();
+    }
+    // Several handlers: say which one each group belongs to.
+    bool several = false;
+    for (const LocalInfo& l : m_locals) several = several || l.scope != m_locals.front().scope;
+    std::string scope;
+    for (const LocalInfo& l : m_locals) {
+        if (several && l.scope != scope) {
+            scope = l.scope;
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", scope.c_str());
+            ImGui::PopTextWrapPos();
+        }
+        const std::string id = "##local_" + l.name;
+        const ImU32 color = l.type.empty() ? IM_COL32(160, 160, 170, 255) : typeColor(l.type);
+        const bool isList = l.type.rfind("list of ", 0) == 0;
+        const bool selected = m_focus == Focus::Node && m_selectedKey == l.node;
+        if (panelRow(id.c_str(), color, isList, l.name, l.type.empty() ? "?" : l.type, selected, 0.6f)) {
+            m_pending.push_back([this, node = l.node]() { selectNodeByKey(node, View::Center); });
+        }
+        m_localRows[l.name] = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
+        // Like a variable, it can be dragged onto a field in the same handler (not onto the canvas: it isn't in the header).
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+            ImGui::SetDragDropPayload("PROPULSION_VARIABLE", l.name.c_str(), l.name.size() + 1);
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(color), "%s", l.name.c_str());
+            ImGui::TextDisabled("%s: drop it on a field below its node", l.type.empty() ? "local" : l.type.c_str());
+            ImGui::EndDragDropSource();
+        } else if (ImGui::IsItemHovered()) {
+            PropulsionMKI::UI::tooltip("%s\nMade by a Set Local node in %s (line %d).\nClick to find it; drag onto a field below it to use it.", l.name.c_str(), l.scope.c_str(), l.line);
+        }
+    }
+    ImGui::TreePop();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -549,7 +603,7 @@ void ScriptGraphEditor::drawReferencesPanel() {
         ImGui::OpenPopup("##addreference");
     }
     m_addReferenceButton = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Reach for another entity or script from this one (goes in the header)");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Reach for another entity or script from this one (goes in the header)");
 
     if (ImGui::BeginPopup("##addreference")) {
         if (ImGui::MenuItem("Entity", "one, found by tag")) m_pending.push_back([this]() { addReference("entity"); });
@@ -585,12 +639,12 @@ void ScriptGraphEditor::drawReferencesPanel() {
         m_referenceRows[r.name] = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
         // An entity or a list of entities can be dragged onto a node's field like a variable.
         if (r.kind != "file" && ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-            ImGui::SetDragDropPayload("FORGE_VARIABLE", r.name.c_str(), r.name.size() + 1);
+            ImGui::SetDragDropPayload("PROPULSION_VARIABLE", r.name.c_str(), r.name.size() + 1);
             ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(referenceColor(r.kind)), "%s", r.name.c_str());
             ImGui::TextDisabled("%s: drop it on a field", referenceNote(r.kind));
             ImGui::EndDragDropSource();
         } else if (ImGui::IsItemHovered()) {
-            ForgeEngine::UI::tooltip("%s", r.text.c_str());
+            PropulsionMKI::UI::tooltip("%s", r.text.c_str());
         }
     }
 }
@@ -642,12 +696,22 @@ void ScriptGraphEditor::drawComponentDetails() {
     ImGui::Spacing();
 
     if (object) {
-        detailRow("Script", std::filesystem::path(m_path).filename().string());
+        if (m_objectEditor) {
+            m_objectEditor();
+        } else {
+            detailRow("Script", std::filesystem::path(m_path).filename().string());
+        }
         if (m_sharedBy > 1) detailRow("Shared by", std::to_string(m_sharedBy) + " Objects");
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("The Object is what gets placed in a level. Its mesh, material and script are set in its own editor; here the script sees what it is made of.");
+        ImGui::TextDisabled("The Object is what gets placed in a level. Select its components to edit its mesh, material and camera.");
         ImGui::PopTextWrapPos();
+        return;
+    }
+    if (c->editor) {
+        ImGui::PushID(c->name.c_str());
+        c->editor();
+        ImGui::PopID();
         return;
     }
     for (const auto& row : c->details) detailRow(row.first.c_str(), row.second);
@@ -878,7 +942,7 @@ void ScriptGraphEditor::drawVariableDetails(const VariableInfo& v) {
         bool exposed = v.exposed;
         label("");
         if (ImGui::Checkbox("Exposed", &exposed)) setVariableDecl(v, v.type, v.value, v.parts, exposed);
-        if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("An exposed variable's starting value may be overridden by each Object placed in a level.");
+        if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("An exposed variable's starting value may be overridden by each Object placed in a level.");
     }
 
     ImGui::Spacing();
@@ -891,7 +955,7 @@ void ScriptGraphEditor::drawVariableDetails(const VariableInfo& v) {
             }
         });
     }
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Remove it from the header. Nodes that used it will show a problem when you compile.");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Remove it from the header. Nodes that used it will show a problem when you compile.");
     ImGui::PopID();
 }
 
@@ -970,7 +1034,7 @@ void ScriptGraphEditor::drawReferenceDetails(const ReferenceInfo& r) {
             if (ImGui::Selectable("startup", when == "startup") && when != "startup") setReferenceDecl(r, r.file, r.tag, "startup");
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("used: loaded the first time it is needed\nstartup: loaded when this script is");
+        if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("used: loaded the first time it is needed\nstartup: loaded when this script is");
     }
 
     ImGui::Spacing();
@@ -992,7 +1056,7 @@ void ScriptGraphEditor::drawReferenceDetails(const ReferenceInfo& r) {
             }
         });
     }
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Remove it from the header. Nodes that used it will show a problem when you compile.");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Remove it from the header. Nodes that used it will show a problem when you compile.");
     ImGui::PopID();
 }
 
@@ -1001,7 +1065,7 @@ void ScriptGraphEditor::drawReferenceDetails(const ReferenceInfo& r) {
 // ---------------------------------------------------------------------------------------------
 //
 // The script's text beside the graph. It is read-only: it shows the file as it is on disk, which the
-// graph edits keep valid, so it never disagrees with the graph. ForgeScript has few kinds of word, so
+// graph edits keep valid, so it never disagrees with the graph. PropulsionScript has few kinds of word, so
 // the colors only say what a word is for (a section, an event, a verb, a variable...).
 
 namespace {
@@ -1250,7 +1314,7 @@ void ScriptGraphEditor::drawCodePanel() {
     const float copyWidth = ImGui::CalcTextSize("Copy").x + ImGui::GetStyle().FramePadding.x * 2.0f;
     ImGui::SameLine(ImGui::GetContentRegionMax().x - copyWidth);
     if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText((m_code.hasSelection() ? m_code.selectedText() : m_code.text()).c_str());
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip(m_code.hasSelection() ? "Copy the selected text." : "Copy the script's text.");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip(m_code.hasSelection() ? "Copy the selected text." : "Copy the script's text.");
     ImGui::Separator();
 
     if (!m_codeFileOk) {
@@ -1505,8 +1569,8 @@ void ScriptGraphEditor::drawCodePanel() {
     if (textHovered && !m_codeDragging) {
         const int line = std::clamp(static_cast<int>(std::floor((io.MousePos.y - origin.y) / rowHeight)), 0, count - 1) + 1;
         auto problem = problemAt.find(line);
-        if (m_codeHasError && m_codeError.line == line) ForgeEngine::UI::tooltip("%s", m_codeError.message.c_str());
-        else if (problem != problemAt.end()) ForgeEngine::UI::tooltip("%s", problem->second->message.c_str());
+        if (m_codeHasError && m_codeError.line == line) PropulsionMKI::UI::tooltip("%s", m_codeError.message.c_str());
+        else if (problem != problemAt.end()) PropulsionMKI::UI::tooltip("%s", problem->second->message.c_str());
     }
     ImGui::PopStyleVar();
     ImGui::EndChild();
@@ -1535,4 +1599,4 @@ void ScriptGraphEditor::drawCodePanel() {
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

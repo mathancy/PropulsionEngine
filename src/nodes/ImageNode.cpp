@@ -1,6 +1,6 @@
 #include "nodes/ImageNode.h"
 
-namespace Forge {
+namespace Propulsion {
 
 ImageNode::ImageNode(int nodeId, ImVec2 pos)
     : Node(nodeId, "Image", "Image", pos, ImVec2(6, 9)),
@@ -27,4 +27,4 @@ void ImageNode::updateOutputPinType() {
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

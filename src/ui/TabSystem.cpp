@@ -2,7 +2,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::renderTabs() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -57,8 +57,12 @@ void Engine::renderTabs() {
             // Format: "DisplayLabel###StableID"
             // Using ### (triple hash) means ONLY what comes after ### is used as the ID
             // This allows the display label to change (e.g., adding asterisk) without changing the tab ID
+            // The ID is the tab's kind and the asset it shows, not just its name: a Material and an Object can share a name,
+            // and two tabs with the same ID are an ImGui error (the tab can't be told apart, and clicks go to the wrong one).
             std::string displayLabel = (m_tabs[i].hasUnsavedChanges ? "* " : "") + m_tabs[i].name;
-            std::string fullLabel = displayLabel + "###" + m_tabs[i].name;
+            std::string tabId = std::to_string(static_cast<int>(m_tabs[i].type)) + ":" +
+                                (m_tabs[i].assetId.empty() ? m_tabs[i].name : m_tabs[i].assetId);
+            std::string fullLabel = displayLabel + "###" + tabId;
             
             // First tab (scene tab) should not have a close button
             bool* pOpen = (i == 0) ? nullptr : new bool(true);
@@ -123,4 +127,4 @@ void Engine::renderTabs() {
     ImGui::PopStyleVar(2);
 }
 
-} // namespace Forge
+} // namespace Propulsion

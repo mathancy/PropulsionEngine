@@ -2,6 +2,14 @@
 
 #include "core/Window.h"
 #include "core/Camera.h"
+#include "core/CameraSettings.h"
+#include "core/SpringArm.h"
+#include "core/CameraFrustum.h"
+#include "core/CollisionSettings.h"
+#include "core/LightSettings.h"
+#include "core/EnvironmentSettings.h"
+#include "physics/CollisionOutline.h"
+#include "physics/PlayPhysics.h"
 #include "rendering/Shader.h"
 #include "rendering/Mesh.h"
 #include "rendering/VulkanContext.h"
@@ -9,6 +17,14 @@
 #include "ui/TabSystem.h"
 #include "ui/ContentItem.h"
 #include "rendering/WorldGrid.h"
+#include "rendering/SceneLighting.h"
+#include "rendering/LightingData.h"
+#include "rendering/ShadowRenderer.h"
+#include "ui/OutputLogPanel.h"
+#include "rendering/AmbientOcclusion.h"
+#include "rendering/RayTracing.h"
+#include "rendering/RayDebugPass.h"
+#include "rendering/TextureTable.h"
 #include "core/CrashHandler.h"
 #include "rendering/ThumbnailGenerator.h"
 
@@ -21,13 +37,17 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
 #include <memory>
+#include <optional>
+#include <future>
 #include <vector>
 #include <string>
 #include <set>
 #include <unordered_map>
 #include <ctime>
 
-namespace Forge {
+namespace Propulsion {
+
+struct EvaluatedMaterial;  // what a material's node graph works out (nodegraph/NodeGraph.h)
 
 /**
  * SceneObject - Legacy struct for scene entities.
@@ -60,6 +80,9 @@ struct SceneObject {
     // updates every instance that isn't overriding that property.
     bool overridesMesh = false;
     bool overridesMaterial = false;
+    std::string inputMappingId;    // Runtime only, never saved: filled in when Play starts from the source Object asset (empty = no input)
+    bool collisionEnabled = true;  // Runtime only: `make Collision.Enabled false` in a script turns this off (and a destroyed object's is off)
+    float lookPitch = 0.0f;    // Runtime only: while playing, the pitch (degrees) that tilts only this object's camera (see SpringArmSettings::usePawnControlRotation)
     std::string scriptFile;    // Runtime only, never saved: filled in when Play starts from the source Object asset's script (empty = nothing runs)
 
     SceneObject(const std::string& n) 
@@ -74,6 +97,16 @@ struct UndoState {
     glm::quat quaternion;
     glm::vec3 scale;
     
+    // A step is a move (the fields above), an object being added to the scene (created, duplicated) or removed from it, or an
+    // object being edited (its name, visibility, mesh or material). For the last three, `object` is the object (so that it can
+    // be put back, or taken out again; for an edit, the object as it was before), `objectIndex` is where it is in the scene, and
+    // `selectionBefore` is what was selected before. The steps are undone in the reverse of the order they were made in, so the
+    // scene is always just as the step saw it. See core/SceneHistory.h.
+    enum class Kind { Move, Added, Removed, Edited };
+    Kind kind = Kind::Move;
+    std::shared_ptr<SceneObject> object;
+    int selectionBefore = -1;
+
     UndoState(int idx, const glm::vec3& pos, const glm::vec3& rot, const glm::quat& quat, const glm::vec3& scl)
         : objectIndex(idx), position(pos), rotation(rot), quaternion(quat), scale(scl) {}
 };
@@ -90,8 +123,8 @@ public:
     void saveProject(const std::string& filepath);
     void loadProject(const std::string& filepath);
     void newProject();
-    void openProject(const std::string& filepath);  // skip the startup dialog and open this .fproj (also: ForgeEngine.exe <project.fproj>)
-    void openScript(const std::string& scriptPath) { openScriptGraphTab(scriptPath); }  // after openProject; ForgeEngine.exe <project.fproj> <Scripts/x.forge>: open its graph
+    void openProject(const std::string& filepath);  // skip the startup dialog and open this .pproj (also: PropulsionMKI.exe <project.pproj>)
+    void openScript(const std::string& scriptPath) { openScriptGraphTab(scriptPath); }  // after openProject; PropulsionMKI.exe <project.pproj> <Scripts/x.prop>: open its graph
     void saveAllUnsavedAssets();  // Save all assets in m_unsavedContentItems
     void scanAssetsDirectory(bool scanAllFolders = false); // Scan filesystem and rebuild content items
     std::string generateGUID(); // Generate a unique identifier for assets
@@ -117,7 +150,7 @@ private:
     void renderToolButtons();
     void shutdown();
     
-    // Play mode: runs ForgeScript scripts on a copy of the scene, then restores the scene on stop.
+    // Play mode: runs PropulsionScript scripts on a copy of the scene, then restores the scene on stop.
     void startPlay();
     void stopPlay();
 
@@ -133,12 +166,68 @@ private:
     int materialIndexOf(const SceneObject& obj) const;
     bool objectUsesMaterial(const SceneObject& obj, int itemIndex) const;
     void deleteObject(int index);
+    void recordObjectEdit(int index, const SceneObject& before);  // the object at `index` was just edited; Ctrl+Z puts `before` back
+    void duplicateObject(int index);  // a copy in the same place as the original (Ctrl+D, Edit and the Objects panel menu); the copy is selected, and Ctrl+Z removes it
 
     // Object assets are the defaults for the instances placed from them.
     const ContentItem* sourceAssetOf(const SceneObject& obj) const;
     void applyAssetDefaults(SceneObject& obj) const;   // copies the asset's mesh/material into every property not overridden
     void syncInstancesOf(const std::string& assetGUID); // after an asset's defaults change
     void inferOverrides(SceneObject& obj) const;        // for a project saved before overrides were recorded
+
+    // The properties of an Object asset, drawn by the Object editor and by the Graph view. Each returns true if the
+    // user changed something (the caller keeps it: the Object editor waits for Ctrl+S, the Graph view saves).
+    bool drawObjectMeshProperty(ContentItem& item);
+    bool drawObjectMaterialProperty(ContentItem& item);
+    bool drawObjectScriptProperty(ContentItem& item, bool inGraphView);
+    bool drawAddComponentButton(ContentItem& item);   // "+ Add Component" and its menu
+    bool drawObjectCameraProperty(ContentItem& item); // the Camera component's settings, with Remove
+    bool drawObjectLightProperty(ContentItem& item);  // the Light component's settings, with Remove
+
+    // Environment (ui/EnvironmentPanel.cpp)
+    struct EnvironmentLoad {
+        std::string hdriPath;  // what was asked for ("" is the default sky)
+        bool ok = false;
+        std::string error;
+        std::string info;      // for the log: its size, and how long preparing it took
+        Environment::Prepared prepared;
+    };
+    void updateEnvironment();                         // before a frame is recorded: swap in a finished HDRI, start loading a new one
+    void startEnvironmentLoad();
+    static EnvironmentLoad loadEnvironment(const std::string& hdriPath, const std::string& fullPath);  // runs on another thread
+    void updateLightingBlocks(uint32_t frame);        // before a frame is recorded: the scene's lights and sky for this frame
+    void renderEnvironmentSection();                  // the Environment panel's controls (in the Objects panel)
+    bool drawMaterialSurfaceSettings(ContentItem& item);  // the Material editor's blend mode and what see-through does; true if changed
+    bool drawRenderModeSelector();                    // the render mode picker over the viewport's corner; true while the mouse is on it
+    RenderMode activeRenderMode() const;              // what the viewport is drawn with: the project's mode, unless this GPU can't do it
+    void refreshProjectHdris();
+    void useHdriAsEnvironment(const ContentItem& item);
+    VkDescriptorSet hdriThumbnail(const std::string& fullPath);
+    // The editor's picture of a light (never drawn while playing), at `place` (the light's position and turn, no scale). Uses the
+    // next uniform block of the offscreen shader, `drawIndex`, which it advances.
+    void drawLightIcon(VkCommandBuffer commandBuffer, const LightSettings& light, const glm::mat4& place, const glm::mat4& view,
+                       const glm::mat4& projection, const glm::vec3& cameraPos, uint32_t frame, uint32_t& drawIndex);
+    bool drawObjectSpringArmProperty(ContentItem& item); // the Spring Arm component's settings, with Remove
+    bool drawObjectCharacterProperty(ContentItem& item); // the Character Movement component's settings, with Remove
+    bool drawObjectCollisionProperty(ContentItem& item); // whether the Object is solid
+    bool drawObjectInputProperty(ContentItem& item);     // the Input Mapping the Object is played with
+
+    // Input as assets (Enhanced-Input style; see ui/InputAssets.cpp): Input Actions, and Input Mappings (tables of keys).
+    void ensureDefaultInput();                                                // a project with no Input Actions gets the defaults
+    void createInputAsset(const std::string& type, const std::string& name);  // type is "InputAction" or "InputMapping"
+    bool saveInputAsset(ContentItem& item);                                   // write its file now
+    void syncScriptInputs();                                                  // tell the script checker which Input Actions exist
+    void renderInputAssetEditorTab(Tab& tab);                                 // the editor for either
+    void fitCharacterToMesh(ContentItem& item) const;    // size the capsule to the Object's mesh
+    bool drawObjectComponents(ContentItem& item);     // the Object editor's list of components
+    bool saveObjectAsset(ContentItem& item);          // write its .pobj file now
+    void retargetMeshReferences(const std::string& oldId, const std::string& newId);  // after a mesh's ID changes (it was renamed)
+
+    // Camera component: the Object asset an instance came from says whether it has one.
+    bool cameraOf(const SceneObject& obj, CameraSettings& out) const;                  // false if the object has no camera
+    bool lightOf(const SceneObject& obj, LightSettings& out) const;                    // false if the object has no light
+    std::vector<SceneLight> collectSceneLights() const;                                // every visible object that shines, where it shines from
+    glm::mat4 cameraWorldMatrix(const SceneObject& obj, const CameraSettings& cam) const; // where the camera is (no scale)
     void setInstanceMesh(SceneObject& obj, int itemIndex);
     void setInstanceMaterial(SceneObject& obj, int itemIndex);
 
@@ -161,6 +250,7 @@ private:
     std::unique_ptr<Window> m_window;
     std::unique_ptr<VulkanContext> m_vulkanContext;
     std::unique_ptr<Camera> m_camera;
+    std::optional<Camera> m_editorCameraBackup;   // the editor's view while Play looks through a Camera component
     std::unique_ptr<Shader> m_shader;              // Main shader for swap chain rendering
     std::unique_ptr<Shader> m_offscreenShader;     // Shader for offscreen rendering
     std::unique_ptr<Shader> m_maskShader;          // Shader for selection mask rendering
@@ -168,6 +258,7 @@ private:
     std::unique_ptr<Mesh> m_cube;
     std::unique_ptr<Mesh> m_sphere;
     std::unique_ptr<Mesh> m_cylinder;
+    std::unique_ptr<Mesh> m_cameraMesh;   // editor-only picture of a Camera component (resources/default_meshes/Camera.fbx)
     
     // Gizmo-specific meshes (procedurally generated for consistent unit size)
     std::unique_ptr<Mesh> m_gizmoCube;
@@ -176,6 +267,42 @@ private:
     std::unique_ptr<Mesh> m_gizmoDisc;
     std::unique_ptr<WorldGrid> m_worldGrid;
     std::unique_ptr<ThumbnailGenerator> m_thumbnailGenerator;
+
+    // Lights and environment (rendering/SceneLighting.h). The scene's sky belongs to the project; an HDRI is read and
+    // prepared on another thread and swapped in between frames, so picking one never freezes the editor.
+    std::unique_ptr<SceneLighting> m_lighting;
+    std::unique_ptr<ShadowRenderer> m_shadows;                 // the depth maps from the lights' points of view
+    std::unique_ptr<AmbientOcclusion> m_ambientOcclusion;      // depth + normals pre-pass, then occlusion from them
+    std::unique_ptr<TextureTable> m_textureTable;              // every material texture in one array the shaders index
+    std::unique_ptr<RayTracing> m_rayTracing;                  // acceleration structures for the scene (null if the GPU has no ray queries)
+    std::unique_ptr<RayDebugPass> m_rayDebug;                  // primary rays drawn over the viewport, to check the above
+    int m_rayDebugView = 0;                                    // 0 off, 1 hit normals, 2 per-object colours; a developer view, not saved
+    ShadowFrame m_shadowFrame;                                 // this frame's shadow matrices (worked out before it is recorded)
+    std::vector<ShadowRenderer::Caster> m_shadowCasters;       // what casts them this frame
+    // One mesh drawn in the scene pass: its per-object uniforms (written before any pass is recorded) are block `block`.
+    struct SceneDraw {
+        Mesh* mesh = nullptr;
+        glm::mat4 model{1.0f};
+        uint32_t block = 0;
+        BlendMode blendMode = BlendMode::Opaque;
+        bool twoSided = false;
+    };
+    // The scene shader's pipelines (Shader::addVariant numbers; 0 is the normal one): see-through surfaces are blended, and Hybrid RT has its own
+    int m_pipelineBlend = 0;
+    int m_pipelineHybrid = 0;
+    int m_pipelineHybridBlend = 0;
+    EnvironmentSettings m_environment;
+    std::future<EnvironmentLoad> m_environmentLoad;   // valid while a load is running
+    std::string m_loadedHdriPath;                     // what the GPU image shows right now
+    std::string m_failedHdriPath;                     // the last one that couldn't be read (not retried until it changes)
+    std::string m_environmentStatus;                  // shown under the picker: "Loading...", or why it failed
+    Environment::Image m_environmentSmall;            // a small copy of the sky, to work out its diffuse lighting from
+    Environment::Sh9 m_environmentSh;
+    float m_environmentShYaw = 0.0f;                  // the rotation m_environmentSh was worked out for
+    bool m_environmentShDirty = true;
+    bool m_warnedTooManyLights = false;
+    std::vector<std::string> m_projectHdris;          // the HDRIs in the project (relative paths), for the picker
+    std::unordered_map<std::string, VkDescriptorSet> m_hdriThumbnails;  // by file, so a rescan doesn't decode every HDRI again
     
     // Vulkan textures (replacing OpenGL GLuint)
     VkImage m_logoImage;
@@ -216,6 +343,7 @@ private:
     bool m_showViewport;
     bool m_showFPS;
     bool m_showStatistics = false;
+    bool m_showCollisionShapes = false;  // View > Collision Shapes: the solid shapes drawn over the meshes (editor only, hidden in Play)
     bool m_showObjectsPanel;
     bool m_showContentBrowser;
     bool m_showWorldGrid;
@@ -223,16 +351,14 @@ private:
     bool m_dockingLayoutInitialized;
     ImVec2 m_lastDockSpaceSize;
     
-    // Debug console
-    std::vector<std::string> m_consoleBuffer;
-    void renderDebugConsole();
-    void renderDebugOutputTab();
-    void openDebugOutputTab();
+    // Output Log (View -> Output Log): everything the engine, the script compiler and running scripts log
+    OutputLogPanel m_outputLog;
+    bool m_showOutputLog = true;
     void generateThumbnail(ContentItem& item, Mesh* mesh);
     void generateMaterialThumbnail(ContentItem& item, const glm::vec3& color);
     void generateMaterialThumbnailWithTexture(ContentItem& item, const glm::vec3& color, bool useTexture, const std::string& texturePath);
     void createMaterial(const std::string& name);
-    void createObject(const std::string& name);
+    void createObject(const std::string& name, int lightType = -1);  // lightType: 0 a directional light, 1 a point light, -1 none
     void importFile(const std::string& filepath);
     std::string getAssetTypeFromExtension(const std::string& extension);
     VkDescriptorSet generateTextureThumbnail(const std::string& filepath);
@@ -253,7 +379,13 @@ private:
     bool m_isPlaying = false;
     std::unique_ptr<PlayMode> m_playMode;
     std::vector<SceneObject> m_playSnapshot;  // the scene as it was when Play was pressed
-    
+
+    // What the physics knows about each scene object while Play runs (built when it starts; same order as m_sceneObjects).
+    std::vector<Physics::Body> m_playBodies;
+    SpringArmState m_playArm;                        // the Play camera's spring arm as it was last frame (what its lag eases from)
+    Physics::Contacts m_playContacts;                // which scripted objects are touching or blocking each other
+    std::vector<Physics::Pose> playPoses() const;    // where every scene object is right now, for the physics
+
     // Gizmo system
     GizmoMode m_gizmoMode;
     GizmoAxis m_hoveredGizmoAxis;
@@ -304,6 +436,11 @@ private:
     char m_newMaterialName[128];
     bool m_showObjectNamePopup;
     char m_newObjectName[128];
+    int m_newObjectLightType = -1;  // the Object being named is a light of this type (see createObject)
+    bool m_showInputActionNamePopup = false;
+    bool m_showInputMappingNamePopup = false;
+    char m_newInputActionName[128] = {};
+    char m_newInputMappingName[128] = {};
     
     // Rename functionality
     bool m_showRenamePopup;
@@ -318,6 +455,12 @@ private:
     glm::vec3 m_dragPreviewPosition;
     
     // Undo/Redo system
+    // A name being typed in the Objects panel: one history step for the whole edit, made when the text field is let go of.
+    struct PendingEdit {
+        unsigned int fieldId = 0;  // the ImGui id of the text field (0: none)
+        int index = -1;
+        std::shared_ptr<SceneObject> before;
+    } m_pendingNameEdit;
     std::vector<UndoState> m_undoStack;
     std::vector<UndoState> m_redoStack;
     
@@ -366,8 +509,11 @@ private:
     struct CachedTexture {
         VkImage image = VK_NULL_HANDLE;
         VkDeviceMemory memory = VK_NULL_HANDLE;
-        VkImageView view = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;       // the picture decoded from sRGB: for colours (base colour, emissive)
+        VkImageView dataView = VK_NULL_HANDLE;   // the same picture as stored: for data (metallic, roughness, normals, occlusion, opacity)
         VkSampler sampler = VK_NULL_HANDLE;
+        int32_t slotColor = -1;                  // its places in the texture table (-1: not in it)
+        int32_t slotData = -1;
         int width = 0;
         int height = 0;
     };
@@ -397,6 +543,7 @@ private:
         bool useAOTexture = false;
         bool useEmissiveTexture = false;
         bool useHeightTexture = false;
+        bool useOpacityTexture = false;
         
         // Texture invert flags
         bool invertMetallic = false;
@@ -413,8 +560,33 @@ private:
         std::string aoTexturePath;
         std::string emissiveTexturePath;
         std::string heightTexturePath;
+        std::string opacityTexturePath;  // Masked / Translucent: its red channel is the alpha (else the base colour texture's alpha)
+
+        MaterialSettings settings;       // solid, cut out or see-through
     };
     MaterialRenderInfo getMaterialRenderInfo(const SceneObject& obj) const;
+    static MaterialRenderInfo materialRenderInfoFrom(const EvaluatedMaterial& evaluated, const MaterialSettings& settings);
+
+    // Drawing an Object the way the level does, for the Object editor's preview.
+    Mesh* meshByGUID(const std::string& guid) const;                   // the built-in mesh a Mesh asset stands for (Cube if unknown)
+    SceneObject proxyObjectOf(const ContentItem& objectAsset) const;   // a stand-in scene object with the asset's mesh/material
+    void loadMaterialTextures(const MaterialRenderInfo& info);         // before beginFrame: load what a material uses and put it in the texture table
+    UniformBufferObject makeMaterialUbo(const MaterialRenderInfo& info, const glm::mat4& model, const glm::mat4& view,
+                                        const glm::mat4& projection, const glm::vec3& cameraPos);
+    void assetPreviewMatrices(const Tab& tab, glm::mat4& view, glm::mat4& projection, glm::vec3& cameraPos) const;
+
+    // Camera component outline, shared by the level viewport and the Object editor preview.
+    const SceneObject* playCameraOwner(CameraSettings& cam) const;  // the object whose camera Play looks through, or null
+    InputSetup inputSetup() const;                                   // the project's Input Actions and Input Mappings, gathered from its assets
+    Physics::Body physicsBodyOf(const SceneObject& obj) const;       // the shape and character settings of one object, as the physics sees it
+    void buildPlayBodies();                                          // when Play starts: the shape and character settings of every object
+    void drawCollisionShapes(const glm::mat4& view, const glm::mat4& projection, ImVec2 pos, ImVec2 size);  // View > Collision Shapes
+    void stepPlayPhysics(float deltaTime);                           // after the scripts: gravity, jumping, and characters stopping at solid objects
+    void applyLookPitch();                                           // move a scripted object's pitch onto its camera, where its Camera component asks for that
+    void updatePlayCamera(float deltaTime = 0.0f);                   // point the viewport camera at it (every frame of Play; `deltaTime` is the game time that passed, for the arm's lag)
+    float playAspect() const;   // the shape of what Play shows: the level viewport's, or 16:9 before it has one
+    void drawCameraFrustum(const CameraSettings& cam, const glm::mat4& cameraToWorld, const glm::mat4& view,
+                           const glm::mat4& projection, ImVec2 pos, ImVec2 size);
     CachedTexture* getOrLoadTexture(const std::string& path);
     void cleanupTextureCache();
     
@@ -435,4 +607,4 @@ private:
     int m_tabToClose;  // Index of tab pending close confirmation
 };
 
-} // namespace Forge
+} // namespace Propulsion

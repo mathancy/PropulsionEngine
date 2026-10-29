@@ -1,6 +1,6 @@
-# Forge Engine - Complete Documentation Index
+# Propulsion MK I - Complete Documentation Index
 
-Welcome to the Forge Engine documentation. This index helps you find the information you need quickly.
+Welcome to the Propulsion MK I documentation. This index helps you find the information you need quickly.
 
 ---
 
@@ -34,6 +34,7 @@ Welcome to the Forge Engine documentation. This index helps you find the informa
 |------|---------|--------------|
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | System design, roadmap, technical decisions | Understanding codebase |
 | **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** | Solutions to common problems | Something's broken |
+| **[OUTPUT_LOG.md](OUTPUT_LOG.md)** | The Output Log: what is logged, how to log from code, how to use the panel | Adding logging or chasing errors |
 | **[LICENSE](LICENSE)** | Legal terms and usage restrictions | Legal/compliance questions |
 
 ### Project Files
@@ -44,7 +45,7 @@ Welcome to the Forge Engine documentation. This index helps you find the informa
 | **setup.ps1** | Automated dependency setup script |
 | **.gitignore** | Git exclusions |
 | **.gitattributes** | Git file handling |
-| **ForgeEngine.code-workspace** | VS Code workspace configuration |
+| **PropulsionMKI.code-workspace** | VS Code workspace configuration |
 
 ---
 
@@ -56,7 +57,7 @@ Welcome to the Forge Engine documentation. This index helps you find the informa
 2. Download dependencies → **[QUICKSTART.md](QUICKSTART.md#step-1-run-the-setup-script)**
 3. Setup GLAD → **[SETUP.md](SETUP.md#2-glad-opengl-loader)**
 4. Build project → **[BUILD.md](BUILD.md#phase-3-build-with-cmake)**
-5. Run engine → **[QUICKSTART.md](QUICKSTART.md#step-4-run-forge-engine)**
+5. Run engine → **[QUICKSTART.md](QUICKSTART.md#step-4-run-propulsion-engine)**
 
 ### Usage
 
@@ -86,8 +87,8 @@ Welcome to the Forge Engine documentation. This index helps you find the informa
 - **Future features** → [ARCHITECTURE.md](ARCHITECTURE.md#planned-features)
 - **Development phases** → [ARCHITECTURE.md](ARCHITECTURE.md#development-priorities)
 - **Visual scripting vision** → [ARCHITECTURE.md](ARCHITECTURE.md#visual-scripting-vision)
-- **ForgeScript language and node editor** → `ForgeScript/SPEC.md` (the spec) and `ForgeScript/cpp/README.md` (how the engine runs it)
-- **Which Unreal nodes we have, and what they are called here** → [NODELIST.md](NODELIST.md) and the coverage table in `ForgeScript/SPEC.md`
+- **PropulsionScript language and node editor** → `PropulsionScript/SPEC.md` (the spec) and `PropulsionScript/cpp/README.md` (how the engine runs it)
+- **Which Unreal nodes we have, and what they are called here** → [NODELIST.md](NODELIST.md) and the coverage table in `PropulsionScript/SPEC.md`
 
 ---
 
@@ -219,7 +220,7 @@ cmake --build . --config Debug
 rm -r build; mkdir build; cd build; cmake ..; cmake --build . --config Release
 
 # Run
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 ```
 
 ### Controls
@@ -235,7 +236,7 @@ rm -r build; mkdir build; cd build; cmake ..; cmake --build . --config Release
 ### Project Structure
 
 ```
-ForgeEngine/
+PropulsionMKI/
 ├── src/              → Implementation (.cpp)
 ├── include/          → Headers (.h)
 ├── external/         → Dependencies

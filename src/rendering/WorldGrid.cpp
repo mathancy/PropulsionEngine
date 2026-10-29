@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <cstring>
 
-namespace Forge {
+namespace Propulsion {
 
 struct GridUniformBufferObject {
     alignas(16) glm::mat4 view;
@@ -542,5 +542,5 @@ void WorldGrid::render(VkCommandBuffer commandBuffer, const glm::mat4& view, con
     vkCmdDraw(commandBuffer, 6, 1, 0, 0);
 }
 
-} // namespace Forge
+} // namespace Propulsion
 

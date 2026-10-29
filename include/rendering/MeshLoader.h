@@ -5,7 +5,7 @@
 #include <string>
 #include <memory>
 
-namespace Forge {
+namespace Propulsion {
 
 class MeshLoader {
 public:
@@ -16,4 +16,4 @@ private:
     MeshLoader() = default;
 };
 
-} // namespace Forge
+} // namespace Propulsion

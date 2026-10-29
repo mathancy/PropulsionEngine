@@ -2,6 +2,7 @@
 #include "ui/ImGuiTheme.h"
 #include "nodegraph/NodeGraph.h"
 #include "project/ObjectFile.h"
+#include "project/MaterialSettingsFile.h"
 #include "scripting/PlayMode.h"
 #include "platform/FileDialogs.h"
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -12,9 +13,18 @@
 #include <array>
 #include <glm/gtc/matrix_transform.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::renderAssetEditorTab(Tab& tab) {
+    // Input Actions and Input Mappings are tables, not things to look at: their editor is one full-width panel.
+    if (tab.contentItemIndex >= 0 && tab.contentItemIndex < static_cast<int>(m_contentItems.size())) {
+        const std::string& assetType = m_contentItems[tab.contentItemIndex].type;
+        if (assetType == "InputAction" || assetType == "InputMapping") {
+            renderInputAssetEditorTab(tab);
+            return;
+        }
+    }
+
     // Calculate the screen areas for left and right panels
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     float menuBarHeight = ImGui::GetFrameHeight();
@@ -25,8 +35,8 @@ void Engine::renderAssetEditorTab(Tab& tab) {
     float contentHeight = viewport->Size.y - totalTopHeight - footerHeight;
     
     // Splitter configuration
-    const float splitterWidth = ForgeEngine::UI::scaled(6.0f);
-    const float minPanelWidth = ForgeEngine::UI::scaled(200.0f);
+    const float splitterWidth = PropulsionMKI::UI::scaled(6.0f);
+    const float minPanelWidth = PropulsionMKI::UI::scaled(200.0f);
     
     // Get the splitter ratio from the content item (or use tab's copy)
     float splitterRatio = tab.splitterRatio;
@@ -74,7 +84,20 @@ void Engine::renderAssetEditorTab(Tab& tab) {
         
         // Handle camera controls
         bool isHovered = ImGui::IsItemHovered();
-        
+
+        // An Object with a Camera component: outline what the camera sees, in the same orbit view as the preview.
+        if (tab.contentItemIndex >= 0 && tab.contentItemIndex < static_cast<int>(m_contentItems.size())) {
+            const ContentItem& shown = m_contentItems[tab.contentItemIndex];
+            if (shown.type == "Object" && shown.camera.enabled) {
+                glm::mat4 previewView, previewProjection;
+                glm::vec3 previewEye;
+                assetPreviewMatrices(tab, previewView, previewProjection, previewEye);
+                SceneObject atOrigin("preview");  // the preview shows the object at the origin, in the same Z-up world as the level
+                drawCameraFrustum(shown.camera, cameraWorldMatrix(atOrigin, shown.camera),
+                                  previewView, previewProjection, viewportPos, viewportSize);
+            }
+        }
+
         // Right mouse button drag to orbit
         if (isHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
             ImVec2 delta = ImGui::GetIO().MouseDelta;
@@ -99,8 +122,8 @@ void Engine::renderAssetEditorTab(Tab& tab) {
             ContentItem& item = m_contentItems[tab.contentItemIndex];
             if (item.type == "Material") {
                 // Draw mesh selector buttons at bottom-right of viewport
-                float buttonSize = ForgeEngine::UI::scaled(28.0f);
-                float buttonSpacing = ForgeEngine::UI::scaled(4.0f);
+                float buttonSize = PropulsionMKI::UI::scaled(28.0f);
+                float buttonSpacing = PropulsionMKI::UI::scaled(4.0f);
                 float padding = 8.0f;
                 float totalButtonWidth = (buttonSize * 4) + (buttonSpacing * 3);
                 
@@ -126,13 +149,13 @@ void Engine::renderAssetEditorTab(Tab& tab) {
                 if (ImGui::Button("##CubeBtn", ImVec2(buttonSize, buttonSize))) {
                     tab.previewMeshType = PreviewMeshType::Cube;
                 }
-                if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Cube");
+                if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Cube");
                 // Draw cube icon manually (simple box)
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 btnMin = ImGui::GetItemRectMin();
                 ImVec2 btnMax = ImGui::GetItemRectMax();
                 ImVec2 center = ImVec2((btnMin.x + btnMax.x) * 0.5f, (btnMin.y + btnMax.y) * 0.5f);
-                float iconSize = ForgeEngine::UI::scaled(8.0f);
+                float iconSize = PropulsionMKI::UI::scaled(8.0f);
                 dl->AddRect(ImVec2(center.x - iconSize, center.y - iconSize), 
                            ImVec2(center.x + iconSize, center.y + iconSize), 
                            IM_COL32(255, 255, 255, 200), 2.0f, 0, 2.0f);
@@ -157,7 +180,7 @@ void Engine::renderAssetEditorTab(Tab& tab) {
                 if (ImGui::Button("##SphereBtn", ImVec2(buttonSize, buttonSize))) {
                     tab.previewMeshType = PreviewMeshType::Sphere;
                 }
-                if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Sphere");
+                if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Sphere");
                 // Draw sphere icon (circle)
                 btnMin = ImGui::GetItemRectMin();
                 btnMax = ImGui::GetItemRectMax();
@@ -174,7 +197,7 @@ void Engine::renderAssetEditorTab(Tab& tab) {
                 if (ImGui::Button("##CylinderBtn", ImVec2(buttonSize, buttonSize))) {
                     tab.previewMeshType = PreviewMeshType::Cylinder;
                 }
-                if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Cylinder");
+                if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Cylinder");
                 // Draw cylinder icon (rectangle with ellipses)
                 btnMin = ImGui::GetItemRectMin();
                 btnMax = ImGui::GetItemRectMax();
@@ -367,6 +390,14 @@ void Engine::renderAssetEditorTab(Tab& tab) {
                 }
             }
             
+            // How the surface lets light through (solid, cut out, see-through)
+            if (drawMaterialSurfaceSettings(item)) {
+                tab.hasUnsavedChanges = true;
+                m_unsavedContentItems.insert(tab.contentItemIndex);
+                m_projectModified = true;
+            }
+            ImGui::Separator();
+
             // Get available size for the graph
             ImVec2 graphSize = ImGui::GetContentRegionAvail();
             
@@ -528,6 +559,7 @@ void Engine::renderAssetEditorTab(Tab& tab) {
                             
                             // Write splitter ratio
                             matFile.write(reinterpret_cast<const char*>(&item.splitterRatio), sizeof(float));
+                            MaterialSettingsFile::write(matFile, item.materialSettings);
                             
                             matFile.close();
                             CrashHandler::logInfo("Material saved (v7) with " + std::to_string(nodeCount) + " nodes, " + 
@@ -560,212 +592,27 @@ void Engine::renderAssetEditorTab(Tab& tab) {
                 // Update project modified status
                 m_projectModified = !m_unsavedContentItems.empty();
                 
-                m_consoleBuffer.push_back("Saved material: " + item.name);
+                OutputLog::info(LogCategory::Content, "Saved material: " + item.name);
             }
         } else if (item.type == "Object") {
             ImGui::Text("Asset Properties");
             ImGui::Separator();
             ImGui::Text("Object Editor");
             ImGui::Separator();
-            ImGui::SameLine();
-            
-            // Get current mesh name (prefer GUID lookup, fallback to index)
-            std::string currentMeshName = "None";
-            if (!item.meshReferenceGUID.empty()) {
-                for (const auto& meshItem : m_contentItems) {
-                    if (meshItem.type == "Mesh" && meshItem.id == item.meshReferenceGUID) {
-                        currentMeshName = meshItem.name;
-                        break;
-                    }
-                }
-            } else if (item.meshReference >= 0 && item.meshReference < static_cast<int>(m_contentItems.size())) {
-                currentMeshName = m_contentItems[item.meshReference].name;
-            }
-            
-            if (ImGui::BeginCombo("##MeshCombo", currentMeshName.c_str())) {
-                // "None" option
-                bool isNoneSelected = item.meshReferenceGUID.empty() && item.meshReference == -1;
-                if (ImGui::Selectable("None", isNoneSelected)) {
-                    item.meshReference = -1;
-                    item.meshReferenceGUID.clear();
-                    tab.hasUnsavedChanges = true;
-                    syncInstancesOf(item.id);
-                }
-                
-                // List all mesh items with thumbnails
-                for (size_t i = 0; i < m_contentItems.size(); i++) {
-                    if (m_contentItems[i].type == "Mesh") {
-                        bool isSelected = (item.meshReferenceGUID == m_contentItems[i].id);
-                        
-                        // Draw thumbnail
-                        if (m_contentItems[i].thumbnailTexture != VK_NULL_HANDLE) {
-                            ImGui::Image((ImTextureID)m_contentItems[i].thumbnailTexture, 
-                                        ImVec2(ForgeEngine::UI::scaled(32), ForgeEngine::UI::scaled(32)), ImVec2(0, 0), ImVec2(1, 1));
-                            ImGui::SameLine();
-                        }
-                        
-                        // Draw selectable with increased height for thumbnail
-                        if (ImGui::Selectable(m_contentItems[i].name.c_str(), isSelected, 0, ImVec2(0, ForgeEngine::UI::scaled(32)))) {
-                            item.meshReference = static_cast<int>(i);
-                            item.meshReferenceGUID = m_contentItems[i].id;  // Store GUID
-                            tab.hasUnsavedChanges = true;
-                            syncInstancesOf(item.id);  // instances that don't override the mesh follow it
-                        }
-                        
-                        if (isSelected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            
+
+            // The same property widgets the Graph view shows (see ObjectProperties.cpp).
+            bool changed = false;
+            changed |= drawObjectMeshProperty(item);
             ImGui::Spacing();
-            
-            // Material selection dropdown
-            ImGui::Text("Material:");
-            ImGui::SameLine();
-            
-            // Get current material name (prefer GUID lookup, fallback to index)
-            std::string currentMaterialName = "None";
-            if (!item.materialReferenceGUID.empty()) {
-                for (const auto& matItem : m_contentItems) {
-                    if (matItem.type == "Material" && matItem.id == item.materialReferenceGUID) {
-                        currentMaterialName = matItem.name;
-                        break;
-                    }
-                }
-            } else if (item.materialReference >= 0 && item.materialReference < static_cast<int>(m_contentItems.size())) {
-                currentMaterialName = m_contentItems[item.materialReference].name;
-            }
-            
-            if (ImGui::BeginCombo("##MaterialCombo", currentMaterialName.c_str())) {
-                // "None" option
-                bool isNoneSelected = item.materialReferenceGUID.empty() && item.materialReference == -1;
-                if (ImGui::Selectable("None", isNoneSelected)) {
-                    item.materialReference = -1;
-                    item.materialReferenceGUID.clear();
-                    tab.hasUnsavedChanges = true;
-                    syncInstancesOf(item.id);
-                }
-                
-                // List all material items with thumbnails
-                for (size_t i = 0; i < m_contentItems.size(); i++) {
-                    if (m_contentItems[i].type == "Material") {
-                        bool isSelected = (item.materialReferenceGUID == m_contentItems[i].id);
-                        
-                        // Draw thumbnail
-                        if (m_contentItems[i].thumbnailTexture != VK_NULL_HANDLE) {
-                            ImGui::Image((ImTextureID)m_contentItems[i].thumbnailTexture, 
-                                        ImVec2(ForgeEngine::UI::scaled(32), ForgeEngine::UI::scaled(32)), ImVec2(0, 0), ImVec2(1, 1));
-                            ImGui::SameLine();
-                        }
-                        
-                        // Draw selectable with increased height for thumbnail
-                        if (ImGui::Selectable(m_contentItems[i].name.c_str(), isSelected, 0, ImVec2(0, ForgeEngine::UI::scaled(32)))) {
-                            item.materialReference = static_cast<int>(i);
-                            item.materialReferenceGUID = m_contentItems[i].id;  // Store GUID
-                            tab.hasUnsavedChanges = true;
-                            syncInstancesOf(item.id);  // instances that don't override the material follow it
-                        }
-                        
-                        if (isSelected) {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
+            changed |= drawObjectMaterialProperty(item);
             ImGui::Spacing();
-
-            // Script: the behavior of this Object. Left on None, the object just exists and is
-            // rendered from its mesh, material and transform; nothing runs for it. A script is a
-            // text file in the project's Scripts folder, read when Play starts (no rebuild needed).
-            const std::filesystem::path projectDirPath = std::filesystem::path(m_currentProjectPath).parent_path();
-            const std::string projectDir = projectDirPath.string();
-            const bool projectSaved = !m_currentProjectPath.empty();
-
-            ImGui::Text("Script:");
-            ImGui::SameLine();
-
-            std::error_code scriptEc;
-            const bool scriptExists = item.scriptFile.empty() || std::filesystem::exists(projectDirPath / item.scriptFile, scriptEc);
-            std::string currentScriptName = item.scriptFile.empty() ? "None" : item.scriptFile;
-            if (!scriptExists) currentScriptName += " (missing)";
-
-            if (ImGui::BeginCombo("##ScriptCombo", currentScriptName.c_str())) {
-                if (ImGui::Selectable("None", item.scriptFile.empty())) {
-                    item.scriptFile.clear();
-                    tab.hasUnsavedChanges = true;
-                }
-                for (const std::string& path : PlayMode::scriptsIn(projectDir)) {
-                    bool isSelected = (item.scriptFile == path);
-                    if (ImGui::Selectable(path.c_str(), isSelected)) {
-                        item.scriptFile = path;
-                        tab.hasUnsavedChanges = true;
-                    }
-                    if (isSelected) {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            ImGui::SameLine();
-            if (!projectSaved) ImGui::BeginDisabled();
-            if (ImGui::Button("New Script")) {
-                std::string error;
-                std::string created = PlayMode::createScript(projectDir, item.name, error);
-                if (created.empty()) {
-                    m_consoleBuffer.push_back("ERROR: " + error);
-                } else {
-                    item.scriptFile = created;
-                    tab.hasUnsavedChanges = true;
-                    m_consoleBuffer.push_back("Created script: " + created);
-                    openScriptGraphTab(created);
-                }
-            }
-            if (!projectSaved) ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ForgeEngine::UI::tooltip(projectSaved ? "Create a new script for this object and open it as a graph"
-                                               : "Save the project first, so there is a folder for the script");
-            }
-
-            if (!item.scriptFile.empty() && scriptExists) {
-                ImGui::SameLine();
-                if (ImGui::Button("Open")) {
-                    if (!ForgeEngine::Platform::openWithDefaultApp((projectDirPath / item.scriptFile).string())) {
-                        m_consoleBuffer.push_back("Could not open " + item.scriptFile + ". Open it in any text editor.");
-                    }
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Edit Graph")) {
-                    openScriptGraphTab(item.scriptFile);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Check")) {
-                    std::string problems = PlayMode::checkScript((projectDirPath / item.scriptFile).generic_string());
-                    if (problems.empty()) {
-                        m_consoleBuffer.push_back(item.scriptFile + ": no problems");
-                    } else {
-                        std::istringstream lines(problems);
-                        std::string line;
-                        m_consoleBuffer.push_back(item.scriptFile + " has problems:");
-                        while (std::getline(lines, line)) {
-                            if (!line.empty()) m_consoleBuffer.push_back("  " + line);
-                        }
-                    }
-                }
-            }
-
-            if (item.scriptFile.empty()) {
-                ImGui::TextDisabled("No script: this object just exists and is rendered.");
-            } else if (!scriptExists) {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "That file isn't in the project, so nothing will run.");
-            } else {
-                ImGui::TextDisabled("Edit Graph, or edit %s as text. Press Play to run it. No rebuild needed.", item.scriptFile.c_str());
-            }
+            changed |= drawObjectScriptProperty(item, false);
+            ImGui::Spacing();
+            changed |= drawObjectInputProperty(item);
+            ImGui::Spacing();
+            ImGui::Separator();
+            changed |= drawObjectComponents(item);
+            if (changed) tab.hasUnsavedChanges = true;
 
             ImGui::Spacing();
             ImGui::Separator();
@@ -780,38 +627,9 @@ void Engine::renderAssetEditorTab(Tab& tab) {
             if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
                 ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
 
-                // Regenerate thumbnail with the configured mesh and material
-                if (item.thumbnailTexture != VK_NULL_HANDLE) {
-                    // TODO: Regenerate thumbnail for objects
-                }
-                
-                // Save object file to disk (v2 format with GUIDs)
-                if (!m_currentProjectPath.empty() && !item.filepath.empty()) {
-                    try {
-                        CrashHandler::logInfo("Saving object (Ctrl+S): " + item.name);
-                        std::filesystem::path projectFile(m_currentProjectPath);
-                        std::filesystem::path projectDir = projectFile.parent_path();
-                        std::filesystem::path objectFile = projectDir / item.filepath;
-                        
-                        // Create parent directories if they don't exist
-                        std::filesystem::create_directories(objectFile.parent_path());
-                        
-                        std::ofstream objFile(objectFile, std::ios::binary);
-                        if (objFile.is_open()) {
-                            ObjectFile::write(objFile, {item.id, item.meshReferenceGUID, item.materialReferenceGUID, item.scriptFile});
-                            
-                            objFile.close();
-                            CrashHandler::logInfo("Object saved successfully (v" + std::to_string(ObjectFile::kVersion) + "): " + objectFile.string());
-                        } else {
-                            CrashHandler::logError("Failed to open object file for writing: " + objectFile.string());
-                        }
-                    } catch (const std::exception& e) {
-                        CrashHandler::logError("Exception saving object: " + std::string(e.what()));
-                    }
-                }
-                
+                saveObjectAsset(item);
                 tab.hasUnsavedChanges = false;
-                m_consoleBuffer.push_back("Saved object: " + item.name);
+                OutputLog::info(LogCategory::Content, "Saved object: " + item.name);
             }
         } else {
             ImGui::Text("Mesh Properties");
@@ -832,6 +650,11 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
     Mesh* meshToRender = nullptr;
     glm::vec3 meshColor = glm::vec3(0.7f, 0.7f, 0.7f);
     EvaluatedMaterial evalMat; // Full material evaluation
+    MaterialSettings materialSettings;       // a Material asset: solid, cut out or see-through
+    bool drawAsObject = false;               // an Object asset: use objectPreviewInfo, and show its camera
+    MaterialRenderInfo objectPreviewInfo;
+    CameraSettings objectCamera;
+    LightSettings objectLight;               // an Object asset with a Light component shows a picture of it
     
     if (tab.contentItemIndex >= 0 && tab.contentItemIndex < static_cast<int>(m_contentItems.size())) {
         ContentItem& item = m_contentItems[tab.contentItemIndex];
@@ -848,8 +671,16 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
                 meshToRender = m_cube.get(); // Default
             }
         } else if (item.type == "Object") {
+            // Draw the object the way the level does: its mesh, and its material with textures.
+            objectPreviewInfo = getMaterialRenderInfo(proxyObjectOf(item));
+            drawAsObject = true;
+            objectCamera = item.camera;
+            objectLight = item.light;
+
             // For object assets, render the referenced mesh with material color
-            if (item.meshReference >= 0 && item.meshReference < static_cast<int>(m_contentItems.size())) {
+            if (!item.meshReferenceGUID.empty()) {
+                meshToRender = meshByGUID(item.meshReferenceGUID);
+            } else if (item.meshReference >= 0 && item.meshReference < static_cast<int>(m_contentItems.size())) {
                 const auto& meshItem = m_contentItems[item.meshReference];
                 if (meshItem.name == "Sphere") {
                     meshToRender = m_sphere.get();
@@ -859,7 +690,7 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
                     meshToRender = m_cube.get();
                 }
             } else {
-                meshToRender = m_cube.get(); // Default if no mesh assigned
+                meshToRender = nullptr;  // no mesh assigned: the Object has no mesh to show
             }
             
             // Get material color if assigned
@@ -884,6 +715,7 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
             }
             
             // Evaluate the node graph for live color and texture updates
+            materialSettings = item.materialSettings;
             if (tab.nodeGraph) {
                 evalMat = tab.nodeGraph->evaluateMaterial();
                 meshColor = evalMat.baseColor;
@@ -893,35 +725,16 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
         }
     }
     
-    if (!meshToRender) {
-        meshToRender = m_cube.get(); // Fallback
+    if (!meshToRender && !drawAsObject) {
+        meshToRender = m_cube.get(); // Fallback (an Object with no mesh is drawn without one)
     }
     
-    // Calculate camera position from orbital parameters (Z-up coordinate system)
-    // Yaw rotates around Z axis (vertical), Pitch controls elevation from horizontal
-    float yawRad = glm::radians(tab.cameraYaw);
-    
-    // Clamp pitch to valid range (5° to 89° to avoid extremes)
-    float clampedPitch = glm::clamp(tab.cameraPitch, 5.0f, 89.0f);
-    float pitchRad = glm::radians(clampedPitch);
-    
-    // Spherical to Cartesian conversion for orbit camera (Z-up)
-    // Camera orbits around origin, looking at center
+    // The preview camera orbits the object (Z-up world); the Object editor draws its frustum with the same matrices.
+    glm::mat4 view, projection;
     glm::vec3 cameraPos;
-    cameraPos.x = tab.cameraDistance * cos(pitchRad) * cos(yawRad);
-    cameraPos.y = tab.cameraDistance * cos(pitchRad) * sin(yawRad);
-    cameraPos.z = tab.cameraDistance * sin(pitchRad);
-    
-    glm::vec3 target = glm::vec3(0.0f, 0.0f, 0.0f);
-    glm::vec3 up = glm::vec3(0.0f, 0.0f, 1.0f);  // Z-up
-    
-    glm::mat4 view = glm::lookAt(cameraPos, target, up);
-    
+    assetPreviewMatrices(tab, view, projection, cameraPos);
     VkExtent2D extent = m_vulkanContext->getAssetPreviewExtent();
-    float aspectRatio = static_cast<float>(extent.width) / static_cast<float>(extent.height);
-    glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
-    projection[1][1] *= -1; // Flip Y for Vulkan
-    
+
     // No model rotation needed - FBX models are Z-up, our world is Z-up
     glm::mat4 model = glm::mat4(1.0f);
     
@@ -959,59 +772,58 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
     scissor.extent = extent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
     
-    // Bind shader and draw mesh FIRST (opaque geometry)
-    m_offscreenShader->bind(commandBuffer);
-    
-    // Check which textures were bound (binding happens in Engine::render before beginFrame)
-    bool hasAlbedo = evalMat.useAlbedoTexture && !evalMat.albedoTexturePath.empty();
-    bool hasMetallic = evalMat.useMetallicTexture && !evalMat.metallicTexturePath.empty();
-    bool hasRoughness = evalMat.useRoughnessTexture && !evalMat.roughnessTexturePath.empty();
-    bool hasNormal = evalMat.useNormalTexture && !evalMat.normalTexturePath.empty();
-    bool hasAO = evalMat.useAOTexture && !evalMat.aoTexturePath.empty();
-    bool hasEmissive = evalMat.useEmissiveTexture && !evalMat.emissiveTexturePath.empty();
-    bool hasHeight = evalMat.useHeightTexture && !evalMat.heightTexturePath.empty();
-    
-    UniformBufferObject ubo{};
-    ubo.model = model;
-    ubo.view = view;
-    ubo.projection = projection;
-    ubo.colorAndExposure = glm::vec4(meshColor.r, meshColor.g, meshColor.b, m_exposure);
-    ubo.materialParams = glm::vec4(evalMat.metallic, evalMat.roughness, 1.0f, 0.0f);
-    ubo.textureFlags = glm::vec4(
-        hasAlbedo ? 1.0f : 0.0f,
-        hasMetallic ? 1.0f : 0.0f,
-        hasRoughness ? 1.0f : 0.0f,
-        hasNormal ? 1.0f : 0.0f
-    );
-    ubo.textureFlags2 = glm::vec4(
-        hasAO ? 1.0f : 0.0f,
-        hasEmissive ? 1.0f : 0.0f,
-        hasHeight ? 1.0f : 0.0f,
-        0.0f
-    );
-    ubo.invertFlags = glm::vec4(
-        evalMat.invertMetallic ? 1.0f : 0.0f,
-        evalMat.invertRoughness ? 1.0f : 0.0f,
-        evalMat.invertNormal ? 1.0f : 0.0f,
-        evalMat.invertAO ? 1.0f : 0.0f
-    );
-    ubo.textureStrengths = glm::vec4(
-        evalMat.metallicStrength,
-        evalMat.roughnessStrength,
-        evalMat.normalStrength,
-        evalMat.aoStrength
-    );
-    ubo.emissiveColor = glm::vec4(evalMat.emissiveColor.r, evalMat.emissiveColor.g, evalMat.emissiveColor.b, evalMat.emissiveTextureStrength);
-    ubo.heightParams = glm::vec4(
-        evalMat.heightStrength,
-        evalMat.invertHeight ? 1.0f : 0.0f,
-        0.0f,
-        0.0f
-    );
-    ubo.cameraPos = cameraPos;
-    
-    m_offscreenShader->updateUniformBuffer(m_vulkanContext->getCurrentFrame(), ubo);
-    meshToRender->draw(commandBuffer);
+    // Bind shader and draw mesh FIRST (opaque geometry). A see-through material is drawn blended, over the preview's background.
+    const MaterialSettings& shownSettings = drawAsObject ? objectPreviewInfo.settings : materialSettings;
+    const bool shownTranslucent = shownSettings.blendMode == BlendMode::Translucent;
+    m_offscreenShader->bind(commandBuffer, shownTranslucent ? m_pipelineBlend : 0);
+    m_offscreenShader->setCullMode(commandBuffer, shownSettings.twoSided);
+    // The preview is lit by the default lights and the scene's sky, not by the lights in the level
+    m_lighting->bind(commandBuffer, m_offscreenShader->getPipelineLayout(), 1, m_vulkanContext->getCurrentFrame(), SceneLighting::Slot::Preview);
+    if (m_textureTable) {
+        const VkDescriptorSet table = m_textureTable->getSet(m_vulkanContext->getCurrentFrame());
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_offscreenShader->getPipelineLayout(), 2, 1, &table, 0, nullptr);
+    }
+
+    // The same uniform block the level uses (its textures are already in the texture table: Engine::render loaded them before recording)
+    UniformBufferObject ubo;
+    if (drawAsObject) {
+        ubo = makeMaterialUbo(objectPreviewInfo, model, view, projection, cameraPos);
+    } else {
+        MaterialRenderInfo previewInfo = materialRenderInfoFrom(evalMat, materialSettings);
+        previewInfo.baseColor = meshColor;
+        ubo = makeMaterialUbo(previewInfo, model, view, projection, cameraPos);
+    }
+
+    // Each thing drawn gets its own block of the uniform buffer (a single block would be overwritten by the
+    // next draw before the GPU reads it).
+    const uint32_t frame = m_vulkanContext->getCurrentFrame();
+    m_offscreenShader->resetObjectIndex();
+    m_offscreenShader->updateUniformBufferDynamic(frame, ubo);
+    m_offscreenShader->bindWithDynamicOffset(commandBuffer, frame, 0);
+    if (meshToRender) meshToRender->draw(commandBuffer);
+
+    // An Object with a Camera component shows the camera too, where the level would put it (the preview is the
+    // same Z-up world, with the object at the origin).
+    if (drawAsObject && objectCamera.enabled && m_cameraMesh) {
+        SceneObject atOrigin("preview");
+        MaterialRenderInfo cameraLook;
+        cameraLook.baseColor = glm::vec3(0.35f, 0.65f, 1.0f);
+        cameraLook.roughness = 0.6f;
+        UniformBufferObject cameraUbo = makeMaterialUbo(cameraLook, cameraWorldMatrix(atOrigin, objectCamera) * CameraSettings::meshCorrection(),
+                                                        view, projection, cameraPos);
+        m_offscreenShader->updateUniformBufferDynamic(frame, cameraUbo);
+        m_offscreenShader->bindWithDynamicOffset(commandBuffer, frame, 1);
+        m_cameraMesh->draw(commandBuffer);
+    }
+
+    // ... and a light shows where it is: at the origin, the sun aimed the way a new one is when it is placed in the level.
+    if (drawAsObject && objectLight.enabled) {
+        const uint32_t firstFree = (objectCamera.enabled && m_cameraMesh) ? 2 : 1;  // the mesh is block 0, the camera block 1
+        uint32_t drawIndex = firstFree;
+        const glm::mat4 place = glm::mat4_cast(objectLight.type == LightSettings::Type::Directional ? rotationFromForwardTo(glm::vec3(-0.4f, 0.5f, -1.0f))
+                                                                                                    : glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+        drawLightIcon(commandBuffer, objectLight, place, view, projection, cameraPos, frame, drawIndex);
+    }
     
     // Render world grid AFTER mesh (transparent, with depth testing to properly occlude/be occluded)
     m_worldGrid->render(commandBuffer, view, projection, cameraPos);
@@ -1019,4 +831,4 @@ void Engine::renderAssetPreview(Tab& tab, VkCommandBuffer commandBuffer) {
     vkCmdEndRenderPass(commandBuffer);
 }
 
-} // namespace Forge
+} // namespace Propulsion

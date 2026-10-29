@@ -18,7 +18,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace Forge {
+namespace Propulsion {
 
 namespace {
 
@@ -156,7 +156,7 @@ int NodeGraph::hitTestConnection(const ImVec2& mousePos, const ImVec2& canvasPos
 void NodeGraph::renderConnections(ImDrawList* drawList, const ImVec2& canvasPos) {
     // Connection line color: white
     ImU32 lineColor = IM_COL32(255, 255, 255, 220);
-    float lineThickness = ForgeEngine::UI::scaled(3.0f);
+    float lineThickness = PropulsionMKI::UI::scaled(3.0f);
 
     // The wire under the mouse is lit, so it is clear which one a right-click will cut. (Not while something
     // else is going on, or when the mouse is on a node or a pin.)
@@ -179,11 +179,11 @@ void NodeGraph::renderConnections(ImDrawList* drawList, const ImVec2& canvasPos)
         float wireThickness = lineThickness;
         if (outPin->type != PinType::Exec && dynamic_cast<const ScriptNode*>(outNode)) {
             wireColor = IM_COL32(110, 185, 255, 230);
-            wireThickness = ForgeEngine::UI::scaled(2.0f);
+            wireThickness = PropulsionMKI::UI::scaled(2.0f);
         }
         if (static_cast<int>(i) == hovered) {
             wireColor = IM_COL32(255, 190, 90, 255);
-            wireThickness += ForgeEngine::UI::scaled(1.5f);
+            wireThickness += PropulsionMKI::UI::scaled(1.5f);
         }
 
         wirePath(outNode, *outPin, startPos, endPos, points);
@@ -223,10 +223,10 @@ void NodeGraph::renderDraggingConnection(ImDrawList* drawList, const ImVec2& can
 
     // Connection line color: white
     ImU32 lineColor = IM_COL32(255, 255, 255, 200);
-    float lineThickness = ForgeEngine::UI::scaled(3.0f);  // A couple pixels thick
+    float lineThickness = PropulsionMKI::UI::scaled(3.0f);  // A couple pixels thick
 
     // Draw Electronic Nodes style connection
     drawElectronicConnection(drawList, startPos, endPos, lineColor, lineThickness, m_draggingPinIsOutput);
 }
 
-} // namespace Forge
+} // namespace Propulsion

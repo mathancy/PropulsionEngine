@@ -1,4 +1,4 @@
-// ForgeEngine Platform-Specific File Dialogs
+// PropulsionMKI Platform-Specific File Dialogs
 // Windows implementation of native file/folder dialogs
 
 #pragma once
@@ -9,7 +9,7 @@
 // Forward declaration to avoid GLFW header dependency
 struct GLFWwindow;
 
-namespace ForgeEngine {
+namespace PropulsionMKI {
 namespace Platform {
 
 /**
@@ -21,7 +21,7 @@ namespace Platform {
 std::string showNewProjectFolderDialog(GLFWwindow* window, const std::string& projectName);
 
 /**
- * @brief Shows an "Open File" dialog for .fproj project files
+ * @brief Shows an "Open File" dialog for .pproj project files
  * @param window The parent GLFW window
  * @return The selected file path, or empty string if cancelled
  */
@@ -49,4 +49,4 @@ std::string showProjectFolderDialog(GLFWwindow* window);
 bool openWithDefaultApp(const std::string& path);
 
 } // namespace Platform
-} // namespace ForgeEngine
+} // namespace PropulsionMKI

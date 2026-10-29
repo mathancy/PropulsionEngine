@@ -5,7 +5,7 @@
 #include <iostream>
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 
 std::unique_ptr<Mesh> MeshLoader::loadFromFile(VulkanContext* context, const std::string& filepath) {
     CrashHandler::logInfo("Loading mesh from: " + filepath);
@@ -21,7 +21,6 @@ std::unique_ptr<Mesh> MeshLoader::loadFromFile(VulkanContext* context, const std
     
     if (!scene) {
         std::string errorMsg = "Failed to load mesh: " + filepath + " - Error: " + std::string(error.description.data);
-        std::cerr << errorMsg << std::endl;
         CrashHandler::logError(errorMsg);
         return nullptr;
     }
@@ -29,7 +28,6 @@ std::unique_ptr<Mesh> MeshLoader::loadFromFile(VulkanContext* context, const std
     // Find the first mesh in the scene
     if (scene->meshes.count == 0) {
         std::string errorMsg = "No meshes found in file: " + filepath;
-        std::cerr << errorMsg << std::endl;
         CrashHandler::logError(errorMsg);
         ufbx_free_scene(scene);
         return nullptr;
@@ -103,4 +101,4 @@ std::unique_ptr<Mesh> MeshLoader::loadFromFile(VulkanContext* context, const std
     return mesh;
 }
 
-} // namespace Forge
+} // namespace Propulsion

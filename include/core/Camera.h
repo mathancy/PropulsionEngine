@@ -4,7 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 enum class CameraMovement {
     FORWARD,
@@ -41,6 +41,14 @@ public:
     void setPosition(const glm::vec3& position) { m_position = position; }
     void setYaw(float yaw) { m_yaw = yaw; }
     void setPitch(float pitch) { m_pitch = pitch; }
+    /// Look from `position` along `front` with `up` overhead, instead of from yaw and pitch. Play uses this to look
+    /// through a Camera component. (Yaw and pitch are kept in step so anything that reads them still makes sense.)
+    void setView(const glm::vec3& position, const glm::vec3& front, const glm::vec3& up);
+    /// The projection: vertical field of view in degrees, and the near and far clip distances.
+    void setProjection(float verticalFovDegrees, float nearPlane, float farPlane);
+    float getNearPlane() const { return m_nearPlane; }
+    float getFarPlane() const { return m_farPlane; }
+
     void setMovementSpeed(float speed) { m_movementSpeed = speed; }
     void setMouseSensitivity(float sensitivity) { m_mouseSensitivity = sensitivity; }
     void updateCameraVectors();
@@ -66,4 +74,4 @@ private:
     float m_farPlane;
 };
 
-} // namespace Forge
+} // namespace Propulsion

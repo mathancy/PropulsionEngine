@@ -7,9 +7,12 @@
 #include <iostream>
 #include <set>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
+#include <type_traits>
 
-namespace Forge {
+namespace Propulsion {
 
 static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
     auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
@@ -135,9 +138,9 @@ void VulkanContext::createInstance() {
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "ForgeEngine";
+    appInfo.pApplicationName = "PropulsionMKI";
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "ForgeEngine";
+    appInfo.pEngineName = "PropulsionMKI";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_3;
 
@@ -211,20 +214,142 @@ void VulkanContext::pickPhysicalDevice() {
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
 
-    for (const auto& device : devices) {
-        if (isDeviceSuitable(device)) {
-            m_physicalDevice = device;
-            break;
+    // PROPULSION_GPU picks by number (as logged below) or by part of the name; otherwise the best suitable one is used.
+    const char* wanted = std::getenv("PROPULSION_GPU");
+    const std::string request = wanted ? wanted : "";
+
+    GpuCandidate best;
+    int bestIndex = -1;
+    for (size_t i = 0; i < devices.size(); i++) {
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(devices[i], &properties);
+        const GpuCandidate candidate = describeGpu(devices[i]);
+        CrashHandler::logInfo("GPU " + std::to_string(i) + ": " + properties.deviceName + (candidate.suitable ? "" : " (not usable)") +
+                              (candidate.canQuery ? " (ray queries)" : ""));
+
+        bool asked = false;
+        if (!request.empty()) {
+            asked = request == std::to_string(i) || std::string(properties.deviceName).find(request) != std::string::npos;
+        }
+        if (!candidate.suitable) continue;
+        if (!request.empty()) {
+            if (asked) { bestIndex = static_cast<int>(i); break; }
+            continue;
+        }
+        if (bestIndex < 0 || gpuIsBetter(candidate, best)) {
+            best = candidate;
+            bestIndex = static_cast<int>(i);
+        }
+    }
+    if (bestIndex < 0 && !request.empty()) {
+        CrashHandler::logWarning("PROPULSION_GPU=\"" + request + "\" matches no usable GPU; choosing automatically");
+        for (size_t i = 0; i < devices.size(); i++) {
+            const GpuCandidate candidate = describeGpu(devices[i]);
+            if (!candidate.suitable) continue;
+            if (bestIndex < 0 || gpuIsBetter(candidate, best)) {
+                best = candidate;
+                bestIndex = static_cast<int>(i);
+            }
         }
     }
 
-    if (m_physicalDevice == VK_NULL_HANDLE) {
+    if (bestIndex < 0) {
         throw std::runtime_error("Failed to find a suitable GPU!");
     }
+    m_physicalDevice = devices[bestIndex];
 
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
-    CrashHandler::logInfo("Selected GPU: " + std::string(properties.deviceName));
+    m_gpuName = properties.deviceName;
+    CrashHandler::logInfo("Selected GPU: " + m_gpuName);
+}
+
+GpuCandidate VulkanContext::describeGpu(VkPhysicalDevice device) {
+    GpuCandidate candidate;
+    candidate.suitable = isDeviceSuitable(device);
+
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(device, &properties);
+    candidate.discrete = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    candidate.canQuery = queryRayTracingCaps(device).canQuery();
+
+    VkPhysicalDeviceMemoryProperties memory;
+    vkGetPhysicalDeviceMemoryProperties(device, &memory);
+    for (uint32_t i = 0; i < memory.memoryHeapCount; i++) {
+        if (memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            candidate.vramBytes = (std::max)(candidate.vramBytes, static_cast<uint64_t>(memory.memoryHeaps[i].size));
+        }
+    }
+    return candidate;
+}
+
+RayTracingCaps VulkanContext::queryRayTracingCaps(VkPhysicalDevice device) const {
+    RayTracingCaps caps;
+    const char* disabled = std::getenv("PROPULSION_DISABLE_RT");
+    if (disabled && disabled[0] != '\0' && disabled[0] != '0') return caps;
+
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(device, &properties);
+    if (properties.apiVersion < VK_API_VERSION_1_2) return caps;
+
+    uint32_t extensionCount = 0;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+    std::vector<VkExtensionProperties> extensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.data());
+    auto has = [&](const char* name) {
+        for (const auto& extension : extensions) {
+            if (std::strcmp(extension.extensionName, name) == 0) return true;
+        }
+        return false;
+    };
+
+    const bool hasStructure = has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+    const bool hasQuery = has(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+    const bool hasPipeline = has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+    caps.deferredHostOperations = has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+    // Only structs for extensions the device has may be chained into the query.
+    VkPhysicalDeviceVulkan12Features v12{};
+    v12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR structure{};
+    structure.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceRayQueryFeaturesKHR query{};
+    query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR pipeline{};
+    pipeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+    void* chain = &v12;
+    if (hasStructure) { structure.pNext = chain; chain = &structure; }
+    if (hasQuery) { query.pNext = chain; chain = &query; }
+    if (hasPipeline) { pipeline.pNext = chain; chain = &pipeline; }
+
+    VkPhysicalDeviceFeatures2 features{};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = chain;
+    vkGetPhysicalDeviceFeatures2(device, &features);
+
+    caps.accelerationStructure = hasStructure && structure.accelerationStructure;
+    caps.rayQuery = hasQuery && query.rayQuery;
+    caps.rayTracingPipeline = hasPipeline && pipeline.rayTracingPipeline;
+    caps.bufferDeviceAddress = v12.bufferDeviceAddress;
+    caps.scalarBlockLayout = v12.scalarBlockLayout;
+    caps.shaderInt64 = features.features.shaderInt64;
+    caps.descriptorIndexing = v12.runtimeDescriptorArray && v12.shaderSampledImageArrayNonUniformIndexing && v12.descriptorBindingPartiallyBound;
+    return caps;
+}
+
+bool VulkanContext::supportsBindlessTextures(VkPhysicalDevice device) const {
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(device, &properties);
+    if (properties.apiVersion < VK_API_VERSION_1_2) return false;
+
+    VkPhysicalDeviceVulkan12Features v12{};
+    v12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceFeatures2 features{};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.pNext = &v12;
+    vkGetPhysicalDeviceFeatures2(device, &features);
+    return v12.runtimeDescriptorArray && v12.shaderSampledImageArrayNonUniformIndexing && v12.descriptorBindingPartiallyBound;
 }
 
 void VulkanContext::createLogicalDevice() {
@@ -248,13 +373,62 @@ void VulkanContext::createLogicalDevice() {
     deviceFeatures.sampleRateShading = VK_TRUE;
     deviceFeatures.fillModeNonSolid = VK_TRUE;
 
+    // Ray tracing: switched on only when the GPU can do ray queries at least (see RayTracingSupport.h).
+    const RayTracingCaps supported = queryRayTracingCaps(m_physicalDevice);
+    std::vector<const char*> extensions = m_deviceExtensions;
+
+    VkPhysicalDeviceVulkan12Features v12{};
+    v12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR structureFeatures{};
+    structureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceRayQueryFeaturesKHR queryFeatures{};
+    queryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR pipelineFeatures{};
+    pipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+    // Every material's textures are in one big array that the scene shader indexes (see TextureTable.h)
+    v12.runtimeDescriptorArray = VK_TRUE;
+    v12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    v12.descriptorBindingPartiallyBound = VK_TRUE;
+
+    void* featureChain = &v12;
+    if (supported.canQuery()) {
+        m_rtCaps = supported;
+        m_rtCaps.rayTracingPipeline = supported.canTracePipeline();  // the pipeline needs its deferred-operations partner
+
+        deviceFeatures.shaderInt64 = VK_TRUE;
+        v12.bufferDeviceAddress = VK_TRUE;
+        v12.scalarBlockLayout = VK_TRUE;
+        structureFeatures.accelerationStructure = VK_TRUE;
+        queryFeatures.rayQuery = VK_TRUE;
+        extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+        v12.pNext = &structureFeatures;
+        structureFeatures.pNext = &queryFeatures;
+        if (m_rtCaps.rayTracingPipeline) {
+            pipelineFeatures.rayTracingPipeline = VK_TRUE;
+            extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+            queryFeatures.pNext = &pipelineFeatures;
+        }
+    } else {
+        m_rtCaps = RayTracingCaps{};
+    }
+
+    VkPhysicalDeviceFeatures2 features2{};
+    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2.features = deviceFeatures;
+    features2.pNext = featureChain;
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.pNext = &features2;
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
-    createInfo.pEnabledFeatures = &deviceFeatures;
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(m_deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = m_deviceExtensions.data();
+    createInfo.pEnabledFeatures = nullptr;  // the features go in features2
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    createInfo.ppEnabledExtensionNames = extensions.data();
 
     if (m_enableValidationLayers) {
         createInfo.enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size());
@@ -269,8 +443,38 @@ void VulkanContext::createLogicalDevice() {
 
     vkGetDeviceQueue(m_device, m_queueFamilies.graphicsFamily.value(), 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_device, m_queueFamilies.presentFamily.value(), 0, &m_presentQueue);
-    
+
+    if (m_rtCaps.canQuery()) {
+        auto load = [&](auto& pointer, const char* name) {
+            pointer = reinterpret_cast<std::remove_reference_t<decltype(pointer)>>(vkGetDeviceProcAddr(m_device, name));
+            return pointer != nullptr;
+        };
+        const bool loaded = load(m_rtFns.vkCreateAccelerationStructureKHR, "vkCreateAccelerationStructureKHR") &&
+                            load(m_rtFns.vkDestroyAccelerationStructureKHR, "vkDestroyAccelerationStructureKHR") &&
+                            load(m_rtFns.vkGetAccelerationStructureBuildSizesKHR, "vkGetAccelerationStructureBuildSizesKHR") &&
+                            load(m_rtFns.vkCmdBuildAccelerationStructuresKHR, "vkCmdBuildAccelerationStructuresKHR") &&
+                            load(m_rtFns.vkGetAccelerationStructureDeviceAddressKHR, "vkGetAccelerationStructureDeviceAddressKHR");
+        if (!loaded) {
+            CrashHandler::logWarning("Ray tracing entry points are missing; ray tracing is off");
+            m_rtCaps = RayTracingCaps{};
+            m_rtFns = RayTracingFunctions{};
+        }
+
+        VkPhysicalDeviceAccelerationStructurePropertiesKHR structureProperties{};
+        structureProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        properties2.pNext = &structureProperties;
+        vkGetPhysicalDeviceProperties2(m_physicalDevice, &properties2);
+        if (structureProperties.minAccelerationStructureScratchOffsetAlignment > 0) {
+            m_asScratchAlignment = structureProperties.minAccelerationStructureScratchOffsetAlignment;
+        }
+    }
+
     CrashHandler::logInfo("Vulkan logical device created");
+    CrashHandler::logInfo(std::string("Ray tracing: ") +
+                          (m_rtCaps.canTracePipeline() ? "ray queries and ray tracing pipelines" :
+                           m_rtCaps.canQuery() ? "ray queries only" : "not available"));
 }
 
 void VulkanContext::createSwapChain() {
@@ -769,6 +973,46 @@ uint32_t VulkanContext::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlag
     throw std::runtime_error("Failed to find suitable memory type!");
 }
 
+void VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
+                                 VkDeviceMemory& memory, bool deviceAddress) {
+    if (deviceAddress) usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(m_device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create buffer!");
+    }
+
+    VkMemoryRequirements requirements;
+    vkGetBufferMemoryRequirements(m_device, buffer, &requirements);
+
+    VkMemoryAllocateFlagsInfo flags{};
+    flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.pNext = deviceAddress ? &flags : nullptr;
+    allocInfo.allocationSize = requirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(requirements.memoryTypeBits, properties);
+    if (vkAllocateMemory(m_device, &allocInfo, nullptr, &memory) != VK_SUCCESS) {
+        vkDestroyBuffer(m_device, buffer, nullptr);
+        buffer = VK_NULL_HANDLE;
+        throw std::runtime_error("Failed to allocate buffer memory!");
+    }
+    vkBindBufferMemory(m_device, buffer, memory, 0);
+}
+
+VkDeviceAddress VulkanContext::getBufferAddress(VkBuffer buffer) const {
+    VkBufferDeviceAddressInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    info.buffer = buffer;
+    return vkGetBufferDeviceAddress(m_device, &info);
+}
+
 VkFormat VulkanContext::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
     for (VkFormat format : candidates) {
         VkFormatProperties props;
@@ -845,7 +1089,8 @@ bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) {
     VkPhysicalDeviceFeatures supportedFeatures;
     vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
 
-    return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
+    return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy &&
+           supportsBindlessTextures(device);
 }
 
 QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDevice device) {
@@ -979,7 +1224,18 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debugCallback(
     void* pUserData) {
     
     if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        std::cerr << "Vulkan validation layer: " << pCallbackData->pMessage << std::endl;
+        // The driver can call this from any thread; the log is safe to write to from all of them.
+        const bool aboutOurCalls = (messageType & (VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                                   VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)) != 0;
+        if (aboutOurCalls) {
+            const LogLevel level = messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? LogLevel::Error : LogLevel::Warning;
+            OutputLog::write(LogCategory::Vulkan, level, std::string("Validation layer: ") + pCallbackData->pMessage);
+        } else {
+            // A general message is the Vulkan loader talking about the machine, not about what the engine did: a layer that
+            // another program (ReShade, OBS, a game's VR mod) registered and left broken, a layer found twice, and so on.
+            // They are true but not ours to fix, so they are Verbose: the panel's Verbose filter shows them.
+            OutputLog::write(LogCategory::Vulkan, LogLevel::Verbose, std::string("Vulkan loader: ") + pCallbackData->pMessage);
+        }
     }
 
     return VK_FALSE;
@@ -1072,7 +1328,8 @@ void VulkanContext::createOffscreenFramebuffer() {
     imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // STORAGE: the ray tracing debug view writes the viewport image from a compute shader (see RayDebugPass.h)
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     
@@ -3265,4 +3522,4 @@ void VulkanContext::processPendingAssetPreviewResize() {
 }
 
 
-} // namespace Forge
+} // namespace Propulsion

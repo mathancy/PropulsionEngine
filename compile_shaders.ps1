@@ -174,6 +174,56 @@ if ($LASTEXITCODE -eq 0) {
     exit 1
 }
 
+# Compile sky vertex shader (the environment drawn behind the scene)
+Write-Host "Compiling sky.vert..." -ForegroundColor Cyan
+& $glslc sky.vert -o sky_vert.spv
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  SUCCESS sky.vert compiled" -ForegroundColor Green
+} else {
+    Write-Host "  FAILED to compile sky.vert" -ForegroundColor Red
+    exit 1
+}
+
+# Compile sky fragment shader (includes lighting.glsl, as basic.frag does)
+Write-Host "Compiling sky.frag..." -ForegroundColor Cyan
+& $glslc sky.frag -o sky_frag.spv
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  SUCCESS sky.frag compiled" -ForegroundColor Green
+} else {
+    Write-Host "  FAILED to compile sky.frag" -ForegroundColor Red
+    exit 1
+}
+
+# Shadows and ambient occlusion
+foreach ($shader in @("shadow.vert", "prepass.vert", "prepass.frag", "ssao.frag", "ssao_blur.frag")) {
+    Write-Host "Compiling $shader..." -ForegroundColor Cyan
+    & $glslc $shader -o "$($shader.Replace('.vert', '_vert').Replace('.frag', '_frag')).spv"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  SUCCESS $shader compiled" -ForegroundColor Green
+    } else {
+        Write-Host "  FAILED to compile $shader" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Ray tracing shaders (need SPIR-V 1.4 or later, so Vulkan 1.2 or later as the target)
+Write-Host "Compiling basic.frag (Hybrid RT variant)..." -ForegroundColor Cyan
+& $glslc --target-env=vulkan1.2 -DHYBRID_RT basic.frag -o basic_rt_frag.spv
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  SUCCESS basic_rt_frag compiled" -ForegroundColor Green
+} else {
+    Write-Host "  FAILED to compile basic.frag with HYBRID_RT" -ForegroundColor Red
+    exit 1
+}
+Write-Host "Compiling rt_debug.comp..." -ForegroundColor Cyan
+& $glslc --target-env=vulkan1.3 rt_debug.comp -o rt_debug_comp.spv
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  SUCCESS rt_debug.comp compiled" -ForegroundColor Green
+} else {
+    Write-Host "  FAILED to compile rt_debug.comp" -ForegroundColor Red
+    exit 1
+}
+
 Write-Host ""
 Write-Host "All shaders compiled successfully!" -ForegroundColor Green
 Write-Host "Output files:" -ForegroundColor Cyan
@@ -192,3 +242,7 @@ Write-Host "  - gizmo_frag.spv"
 Write-Host "  - gizmo_blend_frag.spv"
 Write-Host "  - thumbnail_vert.spv"
 Write-Host "  - thumbnail_frag.spv"
+Write-Host "  - sky_vert.spv"
+Write-Host "  - sky_frag.spv"
+Write-Host "  - shadow_vert.spv, prepass_vert.spv, prepass_frag.spv, ssao_frag.spv, ssao_blur_frag.spv"
+Write-Host "  - basic_rt_frag.spv, rt_debug_comp.spv"

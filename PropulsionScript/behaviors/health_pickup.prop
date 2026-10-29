@@ -1,0 +1,14 @@
+// health_pickup.prop: heals the player on contact, then disappears.
+
+header:
+	needs component:Transform
+	needs system:Audio
+	needs file:"player.prop" as Player when:used
+
+	variable name:Amount type:integer value:25 exposed:true
+
+implement:
+	when Self touches Player as Visitor:
+		do Heal on Visitor amount:Amount
+		do Play on Audio sound:"pickup.wav"
+		destroy Self

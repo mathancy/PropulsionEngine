@@ -1,0 +1,13 @@
+// dasher.prop: uses input names that only a game that defines them has (used by tests/ffi.rs).
+
+header:
+	needs component:Transform
+	needs system:Input
+
+implement:
+	every frame:
+		remember Steer axis steer of Input
+		add Steer to Transform.Loc.X
+
+	when Input starts pressing dash:
+		add 3 to Transform.Loc.Y

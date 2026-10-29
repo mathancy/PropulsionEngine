@@ -2,12 +2,12 @@
 
 /**
  * Component.h
- * Base class for all components in Forge Engine's Object system.
+ * Base class for all components in Propulsion MK I's Object system.
  * 
  * Components are the building blocks that give Objects their behavior
  * and representation. Each Object can have multiple components attached.
  * 
- * Part of the Forge Engine Object/Actor system.
+ * Part of the Propulsion MK I Object/Actor system.
  */
 
 #include <string>
@@ -15,7 +15,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 // Forward declarations
 class Object;
@@ -100,4 +100,4 @@ protected:
     Object* m_owner = nullptr;
 };
 
-} // namespace Forge
+} // namespace Propulsion

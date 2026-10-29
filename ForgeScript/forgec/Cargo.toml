@@ -1,8 +1,0 @@
-[package]
-name = "forgec"
-version = "0.1.0"
-edition = "2021"
-description = "Command-line front end for ForgeScript"
-
-[dependencies]
-forge = { path = "../forge" }

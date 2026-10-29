@@ -1,6 +1,6 @@
 #include "nodes/MaterialOutputNode.h"
 
-namespace Forge {
+namespace Propulsion {
 
 MaterialOutputNode::MaterialOutputNode(int nodeId, ImVec2 pos)
     : Node(nodeId, "Final Material", "MaterialOutput", pos, ImVec2(8, 1))  // Height will be calculated dynamically
@@ -25,4 +25,4 @@ MaterialOutputNode::MaterialOutputNode(int nodeId, ImVec2 pos)
     addInput("Subsurface Strength", PinType::Float, 13);
 }
 
-} // namespace Forge
+} // namespace Propulsion

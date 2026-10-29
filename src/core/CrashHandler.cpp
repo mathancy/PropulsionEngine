@@ -4,12 +4,13 @@
 
 #pragma comment(lib, "Dbghelp.lib")
 
-namespace Forge {
+namespace Propulsion {
 
 std::ofstream CrashHandler::s_logFile;
 std::string CrashHandler::s_logDirectory;
 std::string CrashHandler::s_currentLogFile;
 bool CrashHandler::s_initialized = false;
+int CrashHandler::s_sinkHandle = 0;
 
 void CrashHandler::initialize() {
     if (s_initialized) return;
@@ -43,12 +44,21 @@ void CrashHandler::initialize() {
     
     // Write initial log header
     writeToLog("=====================================");
-    writeToLog("ForgeEngine Crash Handler Initialized");
+    writeToLog("PropulsionMKI Crash Handler Initialized");
     writeToLog("Log File: " + s_currentLogFile);
     writeToLog("System Information:");
     writeToLog(getSystemInfo());
     writeToLog("=====================================");
     
+    // Everything logged from here on is written to the file too (the Output Log panel shows the same stream), and
+    // so is what was logged before this point: the capture of the console starts first.
+    {
+        std::vector<LogEntry> earlier;
+        OutputLog::copySince(0, earlier);
+        for (const LogEntry& entry : earlier) fileSink(entry, OutputLog::categoryName(entry.category));
+    }
+    s_sinkHandle = OutputLog::addSink(&CrashHandler::fileSink);
+
     logInfo("Engine started successfully");
 }
 
@@ -57,7 +67,9 @@ void CrashHandler::shutdown() {
     
     logInfo("Engine shutting down normally");
     writeToLog("=====================================");
-    writeToLog("ForgeEngine session ended normally");
+    OutputLog::removeSink(s_sinkHandle);
+    s_sinkHandle = 0;
+    writeToLog("PropulsionMKI session ended normally");
     writeToLog("=====================================");
     
     if (s_logFile.is_open()) {
@@ -73,7 +85,7 @@ std::string CrashHandler::getLogFilePath() {
     localtime_s(&tm, &now);
     
     std::ostringstream oss;
-    oss << s_logDirectory << "\\ForgeEngine_"
+    oss << s_logDirectory << "\\PropulsionMKI_"
         << std::put_time(&tm, "%Y%m%d_%H%M%S")
         << ".log";
     
@@ -133,9 +145,24 @@ void CrashHandler::writeToLog(const std::string& message) {
 }
 
 void CrashHandler::logMessage(const std::string& level, const std::string& message) {
-    std::ostringstream oss;
-    oss << "[" << getCurrentTimestamp() << "] [" << level << "] " << message;
-    writeToLog(oss.str());
+    // The Output Log takes it from here; the file gets it through fileSink.
+    const LogLevel logLevel = level == "ERROR" ? LogLevel::Error : level == "WARNING" ? LogLevel::Warning : LogLevel::Info;
+    OutputLog::write(LogCategory::Engine, logLevel, message);
+}
+
+void CrashHandler::fileSink(const LogEntry& entry, const std::string& category) {
+    // Not writeToLog: that falls back to std::cerr, which the Output Log captures, which would come back here.
+    if (!s_initialized || !s_logFile.is_open()) return;
+
+    const std::time_t seconds = static_cast<std::time_t>(entry.unixMillis / 1000);
+    std::tm local;
+    localtime_s(&local, &seconds);
+    const char* level = entry.level == LogLevel::Error ? "ERROR" : entry.level == LogLevel::Warning ? "WARNING"
+                      : entry.level == LogLevel::Verbose ? "VERBOSE" : "INFO";
+
+    std::ostringstream line;
+    line << "[" << std::put_time(&local, "%Y-%m-%d %H:%M:%S") << "] [" << level << "] " << category << ": " << entry.message;
+    s_logFile << line.str() << std::endl;
 }
 
 void CrashHandler::logError(const std::string& message) {
@@ -274,12 +301,12 @@ LONG WINAPI CrashHandler::unhandledExceptionFilter(EXCEPTION_POINTERS* exception
     }
     
     // Show message box to user
-    std::string errorMsg = "ForgeEngine has crashed!\n\n";
+    std::string errorMsg = "PropulsionMKI has crashed!\n\n";
     errorMsg += "A crash log has been saved to:\n";
     errorMsg += s_currentLogFile;
     errorMsg += "\n\nPlease report this error to the developers.";
     
-    MessageBoxA(NULL, errorMsg.c_str(), "ForgeEngine - Fatal Error", MB_OK | MB_ICONERROR);
+    MessageBoxA(NULL, errorMsg.c_str(), "PropulsionMKI - Fatal Error", MB_OK | MB_ICONERROR);
     
     // Let the system handle the exception (will terminate the process)
     return EXCEPTION_EXECUTE_HANDLER;
@@ -292,7 +319,7 @@ void CrashHandler::createMiniDump(EXCEPTION_POINTERS* exceptionInfo) {
     localtime_s(&tm, &now);
     
     std::ostringstream dumpPath;
-    dumpPath << s_logDirectory << "\\ForgeEngine_"
+    dumpPath << s_logDirectory << "\\PropulsionMKI_"
              << std::put_time(&tm, "%Y%m%d_%H%M%S")
              << ".dmp";
     
@@ -341,4 +368,4 @@ void CrashHandler::createMiniDump(EXCEPTION_POINTERS* exceptionInfo) {
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

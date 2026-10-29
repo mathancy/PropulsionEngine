@@ -1,9 +1,9 @@
-// ForgeEngine UI Theme
+// PropulsionMKI UI Theme
 // Provides theming functions for ImGui styling
 
 #pragma once
 
-namespace ForgeEngine {
+namespace PropulsionMKI {
 namespace UI {
 
 /**
@@ -52,4 +52,4 @@ void tooltip(const char* fmt, ...);
 void pushPopupPadding();
 
 } // namespace UI
-} // namespace ForgeEngine
+} // namespace PropulsionMKI

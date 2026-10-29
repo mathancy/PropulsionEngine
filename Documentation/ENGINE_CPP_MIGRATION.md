@@ -30,7 +30,7 @@ m_moveIconImage(VK_NULL_HANDLE), m_moveIconMemory(VK_NULL_HANDLE),
 ### 2. After Window Creation (Line ~304)
 **ADD:**
 ```cpp
-m_window = std::make_unique<Window>(width, height, "Forge Engine");
+m_window = std::make_unique<Window>(width, height, "Propulsion MK I");
 CrashHandler::logInfo("Window created successfully");
 
 // Create Vulkan context

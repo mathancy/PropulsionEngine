@@ -1,4 +1,4 @@
-# Forge Engine
+# Propulsion MK I
 
 A modern, lightweight game engine built with OpenGL and C++, designed for rapid game development.
 
@@ -16,7 +16,7 @@ A modern, lightweight game engine built with OpenGL and C++, designed for rapid 
 
 ## 🎮 About
 
-Forge Engine is a proprietary 3D game engine built from the ground up for **Forgeworks Interactive Limited**. It combines the power of modern OpenGL with an intuitive, editor-driven workflow. Our goal is to create a versatile engine with visual scripting even simpler than Unreal Engine's Blueprints.
+Propulsion MK I is a 3D game engine built from the ground up for **Forgeworks Interactive Limited**. It combines the power of modern OpenGL with an intuitive, editor-driven workflow. Our goal is to create a versatile engine with visual scripting even simpler than Unreal Engine's Blueprints.
 
 ### Core Philosophy
 - **Easy to Use** - Artist-friendly interface, minimal learning curve
@@ -33,14 +33,14 @@ Forge Engine is a proprietary 3D game engine built from the ground up for **Forg
 - ✅ **Shader System** - Runtime shader compilation with Phong lighting
 - ✅ **Modular Architecture** - Clean, extensible codebase
 - ✅ **CMake Build** - Cross-platform build configuration
-- ✅ **ForgeScript** - Plain-English scripting (`.forge` files) with a bidirectional node-graph editor: scripts are
+- ✅ **PropulsionScript** - Plain-English scripting (`.prop` files) with a bidirectional node-graph editor: scripts are
   picked per Object asset, run in Play mode, and can be edited as text or as nodes. See the language spec,
-  `ForgeScript/SPEC.md`, and how many of the nodes in [NODELIST.md](NODELIST.md) it covers.
+  `PropulsionScript/SPEC.md`, and how many of the nodes in [NODELIST.md](NODELIST.md) it covers.
 
 ### Coming Soon
 - 🔄 **Scene Management** - Hierarchy, multi-object support, transform gizmos
 - 🔄 **Asset Pipeline** - Model/texture loading, material system
-- 🔄 **Visual Scripting** - Mostly there (see ForgeScript above); still to come are the engine systems its nodes call
+- 🔄 **Visual Scripting** - Mostly there (see PropulsionScript above); still to come are the engine systems its nodes call
   (audio, UI, animation, physics, levels), which are logged to the console for now
 - 🔄 **Physics Engine** - Collision detection and rigidbody dynamics
 - 🔄 **Advanced Rendering** - PBR materials, shadows, post-processing
@@ -78,7 +78,7 @@ cmake --build . --config Release
 
 **4. Run**
 ```powershell
-.\bin\Release\ForgeEngine.exe
+.\bin\Release\PropulsionMKI.exe
 ```
 
 📖 **Detailed instructions**: See [QUICKSTART.md](QUICKSTART.md) or [BUILD.md](BUILD.md)
@@ -103,7 +103,7 @@ cmake --build . --config Release
 ## 📁 Project Structure
 
 ```
-ForgeEngine/
+PropulsionMKI/
 ├── src/              # Engine source code (.cpp)
 ├── include/          # Engine headers (.h)
 ├── external/         # Third-party libraries
@@ -135,7 +135,7 @@ ForgeEngine/
 - **[BUILD.md](BUILD.md)** - Complete build instructions
 - **[SETUP.md](SETUP.md)** - Detailed dependency setup
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design docs & roadmap
-- **[LICENSE](LICENSE)** - Proprietary license terms
+- **[LICENSE](../LICENSE)** - MIT license terms
 
 ## 🗺️ Roadmap
 
@@ -149,7 +149,7 @@ ForgeEngine/
 - Transform gizmos
 - Asset loading (models, textures)
 
-### Phase 3: Visual Scripting (largely done: ForgeScript)
+### Phase 3: Visual Scripting (largely done: PropulsionScript)
 - Node-based editor
 - Event system
 - Logic and math nodes
@@ -178,12 +178,9 @@ This engine is built **by and for** Forgeworks Interactive Limited employees and
 
 ## 📄 License
 
-**Proprietary Software**  
-Copyright © 2025 Forgeworks Interactive Limited. All rights reserved.
+MIT License. Copyright © 2025 Forgeworks Interactive Limited.
 
-This software is confidential and proprietary. Licensed exclusively for use by Forgeworks Interactive Limited employees and contractors for company game development. Unauthorized use, copying, or distribution is prohibited.
-
-See [LICENSE](LICENSE) for complete terms.
+Provided for academic and educational purposes only; it is not a production-ready tool. See [LICENSE](../LICENSE) for the full terms.
 
 ---
 

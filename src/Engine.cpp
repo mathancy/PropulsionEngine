@@ -8,6 +8,9 @@
 #include "utils/Utils.h"
 #include "scripting/PlayMode.h"
 #include "project/ObjectFile.h"
+#include "project/MaterialSettingsFile.h"
+#include "project/InputFiles.h"
+#include "core/SceneHistory.h"
 #include <vulkan/vulkan.h>
 #include <chrono>
 #include <thread>
@@ -33,7 +36,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace Forge {
+namespace Propulsion {
 
 Engine::Engine(int width, int height)
     : m_viewportWidth(width), m_viewportHeight(height),
@@ -83,7 +86,7 @@ Engine::Engine(int width, int height)
     }
 #endif
     
-    m_window = std::make_unique<Window>(width, height, "Forge Engine");
+    m_window = std::make_unique<Window>(width, height, "Propulsion MK I");
     CrashHandler::logInfo("Window created successfully");
     
     // Create Vulkan context AFTER window creation
@@ -116,12 +119,41 @@ void Engine::init() {
     
     // Create Vulkan shaders using SPIR-V
     try {
-        m_shader = std::make_unique<Shader>(m_vulkanContext.get(), "shaders/basic_vert.spv", "shaders/basic_frag.spv", VK_NULL_HANDLE, VK_CULL_MODE_BACK_BIT, true, true);
+        // The lights and sky every lit shader reads (set 1 of its pipeline layout)
+        m_lighting = std::make_unique<SceneLighting>(m_vulkanContext.get(), m_vulkanContext->getOffscreenRenderPass());
+        m_environmentSmall = Environment::makeGradientSky(64);
+        CrashHandler::logInfo("Scene lighting created");
+
+        m_textureTable = std::make_unique<TextureTable>(m_vulkanContext.get());
+        m_shader = std::make_unique<Shader>(m_vulkanContext.get(), "shaders/basic_vert.spv", "shaders/basic_frag.spv", VK_NULL_HANDLE, VK_CULL_MODE_BACK_BIT, true, true, m_lighting->getSetLayout(), m_textureTable->getSetLayout());
         CrashHandler::logInfo("Main shader created with texture support");
         
         // Create shader specifically for offscreen rendering with texture support
-        m_offscreenShader = std::make_unique<Shader>(m_vulkanContext.get(), "shaders/basic_vert.spv", "shaders/basic_frag.spv", m_vulkanContext->getOffscreenRenderPass(), VK_CULL_MODE_BACK_BIT, true, true);
+        m_offscreenShader = std::make_unique<Shader>(m_vulkanContext.get(), "shaders/basic_vert.spv", "shaders/basic_frag.spv", m_vulkanContext->getOffscreenRenderPass(), VK_CULL_MODE_BACK_BIT, true, true, m_lighting->getSetLayout(), m_textureTable->getSetLayout());
+        m_pipelineBlend = m_offscreenShader->addVariant("shaders/basic_frag.spv", m_vulkanContext->getOffscreenRenderPass(), true);
         CrashHandler::logInfo("Offscreen shader created with texture support");
+
+        // Shadows (depth maps from the lights) and ambient occlusion (from depth and normals); the scene shader reads both
+        m_shadows = std::make_unique<ShadowRenderer>(m_vulkanContext.get());
+        m_lighting->setShadowMaps(m_shadows->getDirectionalView(), m_shadows->getPointArrayView(), m_shadows->getSampler());
+        m_ambientOcclusion = std::make_unique<AmbientOcclusion>(m_vulkanContext.get(), m_offscreenShader.get());
+
+        // Ray tracing: acceleration structures and the debug view of primary rays (only where the GPU can do ray queries)
+        if (m_vulkanContext->getRayTracingCaps().canQuery()) {
+            try {
+                m_rayTracing = std::make_unique<RayTracing>(m_vulkanContext.get());
+                m_rayDebug = std::make_unique<RayDebugPass>(m_vulkanContext.get());
+                // The scene shader with ray-traced shadows and occlusion, for the Hybrid RT mode
+                m_pipelineHybrid = m_offscreenShader->addVariant("shaders/basic_rt_frag.spv", m_vulkanContext->getOffscreenRenderPass(), false);
+                m_pipelineHybridBlend = m_offscreenShader->addVariant("shaders/basic_rt_frag.spv", m_vulkanContext->getOffscreenRenderPass(), true);
+                // PROPULSION_RT_DEBUG=1 (hit normals) or 2 (per-object colours) starts with the debug view on, for testing
+                if (const char* start = std::getenv("PROPULSION_RT_DEBUG")) m_rayDebugView = (std::max)(0, (std::min)(2, std::atoi(start)));
+            } catch (const std::exception& e) {
+                CrashHandler::logError(std::string("Ray tracing setup failed, continuing without it: ") + e.what());
+                m_rayDebug.reset();
+                m_rayTracing.reset();
+            }
+        }
         
         // Create shader for selection mask rendering
         m_maskShader = std::make_unique<Shader>(m_vulkanContext.get(), "shaders/mask_vert.spv", "shaders/mask_frag.spv", m_vulkanContext->getSelectionMaskRenderPass());
@@ -158,6 +190,10 @@ void Engine::init() {
         m_cylinder = std::unique_ptr<Mesh>(Mesh::createCylinder(m_vulkanContext.get()));
     }
     CrashHandler::logInfo("Cylinder mesh loaded");
+
+    // The picture of a Camera component, shown in the editor only. No fallback: without it, cameras just have no picture.
+    m_cameraMesh = MeshLoader::loadFromFile(m_vulkanContext.get(), "resources/default_meshes/Camera.fbx");
+    if (!m_cameraMesh) CrashHandler::logWarning("Failed to load Camera.fbx: camera components will have no editor picture");
     
     // Create procedural meshes for gizmos (guaranteed unit size for consistent gizmo rendering)
     CrashHandler::logInfo("Creating procedural gizmo meshes...");
@@ -246,8 +282,8 @@ void Engine::initImGui() {
     if (std::filesystem::exists(fontPath)) {
         io.Fonts->AddFontFromFileTTF(fontPath.c_str(), fontSize, &icons_config, icons_ranges);
     } else {
-        std::cout << "Warning: Font Awesome font not found at " << fontPath << std::endl;
-        std::cout << "Icon rendering will not work. Download Font Awesome 7 Free and place 'Font Awesome 7 Free-Solid-900.otf' in resources/fonts/" << std::endl;
+        OutputLog::print(LogCategory::Engine, LogLevel::Warning, "Font Awesome font not found at ", fontPath);
+        OutputLog::print(LogCategory::Engine, LogLevel::Warning, "Icon rendering will not work. Download Font Awesome 7 Free and place 'Font Awesome 7 Free-Solid-900.otf' in resources/fonts/");
     }
     
     // Load other Space Mono variants (without icons for now)
@@ -259,12 +295,13 @@ void Engine::initImGui() {
     io.Fonts->AddFontDefault();
     
     // Apply frosted glass theme, then scale it for the display (4K / high-DPI monitors)
-    ForgeEngine::UI::setupFrostedGlassTheme();
+    PropulsionMKI::UI::setupFrostedGlassTheme();
     loadPreferences();
     applyUIScale();
 
     // Add startup message to console
-    m_consoleBuffer.push_back("ForgeEngine initialized successfully with Vulkan.");
+    OutputLog::info(LogCategory::Engine, "PropulsionMKI initialized successfully with Vulkan.");
+    m_outputLog.setLogFilePath(CrashHandler::currentLogFile());
     
     // Initialize ImGui for Vulkan
     ImGui_ImplGlfw_InitForVulkan(m_window->getNativeWindow(), true);
@@ -298,8 +335,8 @@ void Engine::applyUIScale() {
     // Auto: follow the OS display scale of the monitor the window is on. Manual: the user's preference.
     float scale = m_uiScaleAuto ? m_window->getContentScale() : m_uiScalePref;
 
-    ForgeEngine::UI::setUIScale(scale);
-    CrashHandler::logInfo("UI scale set to " + std::to_string(ForgeEngine::UI::getUIScale()));
+    PropulsionMKI::UI::setUIScale(scale);
+    CrashHandler::logInfo("UI scale set to " + std::to_string(PropulsionMKI::UI::getUIScale()));
 }
 
 static const char* kPreferencesFile = "preferences.ini";
@@ -317,6 +354,8 @@ void Engine::loadPreferences() {
 
         if (key == "ui_scale_auto") {
             m_uiScaleAuto = (value != "0");
+        } else if (key == "show_output_log") {
+            m_showOutputLog = (value != "0");
         } else if (key == "ui_scale") {
             float parsed = static_cast<float>(std::atof(value.c_str()));
             if (parsed > 0.0f) {
@@ -334,6 +373,7 @@ void Engine::savePreferences() const {
     }
     file << "ui_scale_auto=" << (m_uiScaleAuto ? 1 : 0) << "\n";
     file << "ui_scale=" << m_uiScalePref << "\n";
+    file << "show_output_log=" << (m_showOutputLog ? 1 : 0) << "\n";
 }
 
 void Engine::loadToolIcons() {
@@ -384,49 +424,102 @@ void Engine::startPlay() {
 
     m_playSnapshot = m_sceneObjects;
     m_playMode = std::make_unique<PlayMode>(m_window->getNativeWindow(),
-                                            [this](const std::string& line) { m_consoleBuffer.push_back(line); });
+                                            &OutputLog::write);
 
     // An Object asset is the "class": every instance placed from it runs the asset's script.
     // Objects with no script (or no source asset) just exist and are rendered; nothing runs for them.
     for (SceneObject& obj : m_sceneObjects) {
         obj.scriptFile.clear();
+        obj.inputMappingId.clear();
         if (obj.sourceObjectGUID.empty()) continue;
         for (const ContentItem& item : m_contentItems) {
             if (item.type == "Object" && item.id == obj.sourceObjectGUID) {
                 obj.scriptFile = item.scriptFile;
+                obj.inputMappingId = item.inputMappingGUID;
                 break;
             }
         }
     }
 
+    buildPlayBodies();
+    m_playContacts = Physics::Contacts();
+
+    // The player's input: scripts are checked against the project's Input Actions, and each object is played with its own mapping.
+    const InputSetup input = inputSetup();
+    PlayMode::setScriptInputs(input.actions);
+    m_playMode->setInput(input);
+
+    // A script's `trace` is answered from the shapes of everything solid in the scene (not only the scripted objects).
+    m_playMode->setTraceProvider([this](int fromScene, const float* from, const float* to, float radius, PlayMode::TraceResult& out) {
+        const Physics::TraceHit hit = Physics::traceBodies(m_playBodies, playPoses(), fromScene, glm::vec3(from[0], from[1], from[2]),
+                                                          glm::vec3(to[0], to[1], to[2]), radius);
+        out.blocked = hit.blocked;
+        out.sceneIndex = hit.blocked ? hit.id : -1;
+        for (int i = 0; i < 3; ++i) {
+            out.location[i] = hit.location[i];
+            out.normal[i] = hit.normal[i];
+        }
+        out.distance = hit.distance;
+        return true;
+    });
+
     // Scripts are files in the project's Scripts folder, read now, so an edit needs no rebuild.
     std::string projectDir = std::filesystem::path(m_currentProjectPath).parent_path().string();
     if (!m_playMode->start(m_sceneObjects, projectDir)) {
+        m_playBodies.clear();
         m_playMode.reset();
         m_sceneObjects = m_playSnapshot;  // nothing was started; leave the scene as it was
         m_playSnapshot.clear();
-        m_consoleBuffer.push_back("Play cancelled: fix the script problems above and press Play again.");
+        OutputLog::warning(LogCategory::Editor, "Play cancelled: fix the script problems above and press Play again.");
         return;
     }
-    m_consoleBuffer.push_back("Play started: " + std::to_string(m_playMode->runningCount()) + " scripted object(s) of " +
+    OutputLog::info(LogCategory::Editor, "Play started: " + std::to_string(m_playMode->runningCount()) + " scripted object(s) of " +
                               std::to_string(m_sceneObjects.size()) + ". Press Escape or Stop to end.");
     m_isPlaying = true;
     m_gizmoActive = false;
+    m_playMode->setMouseCaptured(true);  // the mouse turns the player (the cursor comes back when Play ends)
+
+    // Play looks through the Camera component that auto-activates (the editor's view comes back on Stop).
+    m_editorCameraBackup = *m_camera;
+    m_playArm = SpringArmState();  // the arm starts where its Object puts it
+    CameraSettings playCam;
+    if (const SceneObject* owner = playCameraOwner(playCam)) {
+        OutputLog::info(LogCategory::Editor, "Play is looking through the camera on " + owner->name + ".");
+        updatePlayCamera();
+    } else {
+        OutputLog::info(LogCategory::Editor, "Play is using the editor view: no Object with a Camera component set to Auto Activate for Player.");
+    }
+    m_activeGizmoAxis = GizmoAxis::None;
+    m_hoveredGizmoAxis = GizmoAxis::None;
+    // If the editor camera was being flown when Play started, let go of it.
+    if (m_rightMousePressed) {
+        m_rightMousePressed = false;
+        glfwSetInputMode(m_window->getNativeWindow(), GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
 }
 
 void Engine::stopPlay() {
     if (!m_isPlaying) return;
     m_isPlaying = false;
-    m_playMode.reset();
+    m_playBodies.clear();
+    m_playContacts = Physics::Contacts();
+    m_playMode.reset();  // also hands the mouse cursor back
+    if (m_editorCameraBackup) {
+        *m_camera = *m_editorCameraBackup;  // back to the view the editor had when Play started
+        m_editorCameraBackup.reset();
+    }
     m_sceneObjects = m_playSnapshot;  // put the scene back exactly as it was
     m_playSnapshot.clear();
-    m_consoleBuffer.push_back("Play stopped; the scene was restored.");
+    OutputLog::info(LogCategory::Editor, "Play stopped; the scene was restored.");
 }
 
 void Engine::update(float deltaTime) {
     if (m_isPlaying && m_playMode) {
         bool typing = ImGui::GetIO().WantTextInput;
-        m_playMode->step(deltaTime, m_sceneObjects, !typing);
+        const float advanced = m_playMode->step(deltaTime, m_sceneObjects, !typing);
+        stepPlayPhysics(advanced);  // the scripts have said where they want to go; the physics says where they can
+        applyLookPitch();
+        updatePlayCamera(advanced);  // after the scripts have moved things, so the camera follows its object this frame
     }
 
     // Update auto-exposure
@@ -455,140 +548,36 @@ void Engine::render() {
     // Process any pending asset preview resize BEFORE beginning command buffer
     // This must happen when the device is idle (after waitForFrame)
     m_vulkanContext->processPendingAssetPreviewResize();
+
+    // The sky and the lights are written before anything is recorded: a new HDRI replaces the environment image, and
+    // every frame in flight has its own copy of the lights.
+    updateEnvironment();
+    updateLightingBlocks(m_vulkanContext->getCurrentFrame());
     
-    // Update descriptor sets BEFORE beginning command buffer recording
-    // This is required because you cannot update a descriptor set while it's bound to a recording command buffer
+    // Every texture this frame draws with is loaded and put in the texture table now, before anything is recorded: the table's set for this
+    // frame is brought up to date once, here, and nothing later in the frame adds to it. (Each draw's uniform block says which slots it uses.)
     if (!m_showStartupDialog && m_showViewport) {
-        // Reset all texture bindings to default before rendering
-        m_offscreenShader->unbindAllTextures(m_vulkanContext->getCurrentFrame());
-        
-        // Pre-bind all textures needed by scene objects
-        for (size_t i = 0; i < m_sceneObjects.size(); i++) {
-            SceneObject& obj = m_sceneObjects[i];
-            if (!obj.visible) continue;
-            
-            MaterialRenderInfo renderInfo = getMaterialRenderInfo(obj);
-            
-            // Bind each texture type to its corresponding binding slot
-            if (renderInfo.useAlbedoTexture && !renderInfo.albedoTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.albedoTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 1);
-                }
-            }
-            if (renderInfo.useMetallicTexture && !renderInfo.metallicTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.metallicTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 2);
-                }
-            }
-            if (renderInfo.useRoughnessTexture && !renderInfo.roughnessTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.roughnessTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 3);
-                }
-            }
-            if (renderInfo.useNormalTexture && !renderInfo.normalTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.normalTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 4);
-                }
-            }
-            if (renderInfo.useAOTexture && !renderInfo.aoTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.aoTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 5);
-                }
-            }
-            if (renderInfo.useEmissiveTexture && !renderInfo.emissiveTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.emissiveTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 6);
-                }
-            }
-            if (renderInfo.useHeightTexture && !renderInfo.heightTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.heightTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    m_offscreenShader->bindTexture(m_vulkanContext->getCurrentFrame(), 
-                                                   tex->view, tex->sampler, 7);
-                }
-            }
-            // Only bind textures from first visible object that has them
-            break;
+        for (const SceneObject& obj : m_sceneObjects) {
+            if (obj.visible) loadMaterialTextures(getMaterialRenderInfo(obj));
         }
     }
-    
-    // Pre-bind textures for asset preview (if asset editor tab is active)
+
+    // ... and the ones the asset preview (the Object and Material editors) draws with
     if (m_activeTabIndex >= 0 && m_activeTabIndex < static_cast<int>(m_tabs.size())) {
         Tab& activeTab = m_tabs[m_activeTabIndex];
-        if (activeTab.type == TabType::AssetEditor) {
-            // Evaluate material and pre-bind textures for asset preview
-            if (activeTab.contentItemIndex >= 0 && activeTab.contentItemIndex < static_cast<int>(m_contentItems.size())) {
-                ContentItem& item = m_contentItems[activeTab.contentItemIndex];
-                if (item.type == "Material" && activeTab.nodeGraph) {
-                    EvaluatedMaterial evalMat = activeTab.nodeGraph->evaluateMaterial();
-                    uint32_t frame = m_vulkanContext->getCurrentFrame();
-                    
-                    // Albedo texture (binding 1)
-                    if (evalMat.useAlbedoTexture && !evalMat.albedoTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.albedoTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 1);
-                        }
-                    }
-                    // Metallic texture (binding 2)
-                    if (evalMat.useMetallicTexture && !evalMat.metallicTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.metallicTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 2);
-                        }
-                    }
-                    // Roughness texture (binding 3)
-                    if (evalMat.useRoughnessTexture && !evalMat.roughnessTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.roughnessTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 3);
-                        }
-                    }
-                    // Normal texture (binding 4)
-                    if (evalMat.useNormalTexture && !evalMat.normalTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.normalTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 4);
-                        }
-                    }
-                    // AO texture (binding 5)
-                    if (evalMat.useAOTexture && !evalMat.aoTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.aoTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 5);
-                        }
-                    }
-                    // Emissive texture (binding 6)
-                    if (evalMat.useEmissiveTexture && !evalMat.emissiveTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.emissiveTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 6);
-                        }
-                    }
-                    // Height texture (binding 7)
-                    if (evalMat.useHeightTexture && !evalMat.heightTexturePath.empty()) {
-                        CachedTexture* tex = getOrLoadTexture(evalMat.heightTexturePath);
-                        if (tex && tex->view != VK_NULL_HANDLE) {
-                            m_offscreenShader->bindTexture(frame, tex->view, tex->sampler, 7);
-                        }
-                    }
-                }
+        if (activeTab.type == TabType::AssetEditor && activeTab.contentItemIndex >= 0 &&
+            activeTab.contentItemIndex < static_cast<int>(m_contentItems.size())) {
+            ContentItem& item = m_contentItems[activeTab.contentItemIndex];
+            if (item.type == "Object") {
+                // The Object editor's preview draws the object's mesh with its material, like the level does.
+                loadMaterialTextures(getMaterialRenderInfo(proxyObjectOf(item)));
+            } else if (item.type == "Material" && activeTab.nodeGraph) {
+                loadMaterialTextures(materialRenderInfoFrom(activeTab.nodeGraph->evaluateMaterial(), item.materialSettings));
             }
         }
     }
-    
+    if (m_textureTable) m_textureTable->flush(m_vulkanContext->getCurrentFrame());
+
     // Now begin command buffer recording
     m_vulkanContext->beginFrame();
     
@@ -597,6 +586,72 @@ void Engine::render() {
     // STEP 1: Render 3D scene to offscreen framebuffer
     if (!m_showStartupDialog && m_showViewport) {
         
+        // Set up matrices with correct aspect ratio
+        float aspectRatio = 2048.0f / 2048.0f;  // Offscreen texture is square
+        if (m_viewportSize.x > 0 && m_viewportSize.y > 0) {
+            aspectRatio = m_viewportSize.x / m_viewportSize.y;
+        }
+        glm::mat4 projection = m_camera->getProjectionMatrix(aspectRatio);
+        glm::mat4 view = m_camera->getViewMatrix();
+    
+        // Every object in the scene gets a block of the shader's uniform buffer. They are written now, before any pass is
+        // recorded, so the passes below (shadows and occlusion as well as the scene itself) all refer to the same blocks.
+        const uint32_t lightingFrame = m_vulkanContext->getCurrentFrame();
+        m_offscreenShader->resetObjectIndex();
+        std::vector<SceneDraw> draws;
+        uint32_t objectDrawIndex = 0;
+        for (size_t i = 0; i < m_sceneObjects.size(); i++) {
+            SceneObject& obj = m_sceneObjects[i];
+            if (!obj.visible) continue;
+            
+            // Build model matrix
+            glm::mat4 model = glm::mat4(1.0f);
+            model = glm::translate(model, obj.position);
+            model = model * glm::mat4_cast(obj.quaternion);
+            model = glm::scale(model, obj.scale);
+            
+            // An object with no mesh set has nothing to draw.
+            Mesh* meshToRender = getMeshForObject(obj);
+            if (!meshToRender) continue;
+
+            // Material (evaluates the node graph if one is assigned) and its uniform block: colour, textures (as table slots), opacity
+            const MaterialRenderInfo renderInfo = getMaterialRenderInfo(obj);
+            const UniformBufferObject ubo = makeMaterialUbo(renderInfo, model, view, projection, m_camera->getPosition());
+
+            // Update dynamic UBO at current object index and bind with proper offset
+            m_offscreenShader->updateUniformBufferDynamic(m_vulkanContext->getCurrentFrame(), ubo);
+            draws.push_back({meshToRender, model, objectDrawIndex, renderInfo.settings.blendMode, renderInfo.settings.twoSided});
+            objectDrawIndex++;
+        }
+
+        // Ray tracing: the scene's acceleration structures for this frame (only while something uses them)
+        const bool hybrid = activeRenderMode() == RenderMode::HybridRT;
+        if (m_rayTracing && (m_rayDebugView != 0 || hybrid)) {
+            std::vector<RayTracing::Instance> traced;
+            traced.reserve(draws.size());
+            for (const SceneDraw& draw : draws) {
+                if (draw.blendMode != BlendMode::Translucent) traced.push_back({draw.mesh, draw.model, 0});  // glass doesn't block rays yet
+            }
+            m_rayTracing->update(commandBuffer, lightingFrame, traced);
+            if (hybrid) m_lighting->setSceneAccelerationStructure(lightingFrame, m_rayTracing->getTlas(lightingFrame));
+        }
+
+        // Shadow maps from the lights' points of view, then ambient occlusion from the depth and normals
+        if (m_shadows && (m_shadowFrame.directional.valid || m_shadowFrame.pointCount > 0)) {
+            m_shadows->render(commandBuffer, m_shadowFrame, m_shadowCasters);
+        }
+        if (m_ambientOcclusion && m_environment.ambientOcclusion && !hybrid) {
+            std::vector<AmbientOcclusion::Draw> occlusionDraws;
+            occlusionDraws.reserve(draws.size());
+            for (const SceneDraw& draw : draws) {
+                if (draw.blendMode != BlendMode::Translucent) occlusionDraws.push_back({draw.mesh, draw.block});  // glass doesn't darken the sky's light
+            }
+            AmbientOcclusion::Settings occlusion;
+            occlusion.radius = m_environment.aoRadius;
+            occlusion.strength = m_environment.aoStrength;
+            m_ambientOcclusion->render(commandBuffer, lightingFrame, *m_offscreenShader, occlusionDraws, projection, occlusion);
+        }
+
         VkRenderPassBeginInfo offscreenRenderPassInfo{};
         offscreenRenderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         offscreenRenderPassInfo.renderPass = m_vulkanContext->getOffscreenRenderPass();
@@ -627,166 +682,110 @@ void Engine::render() {
         scissor.extent = {2048, 2048};
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
         
-        // Set up matrices with correct aspect ratio
-        float aspectRatio = 2048.0f / 2048.0f;  // Offscreen texture is square
-        if (m_viewportSize.x > 0 && m_viewportSize.y > 0) {
-            aspectRatio = m_viewportSize.x / m_viewportSize.y;
+        // The sky goes down first and everything else covers it.
+        if (m_environment.showBackground) {
+            m_lighting->drawSky(commandBuffer, lightingFrame, SceneLighting::Slot::Scene, view, projection, m_exposure);
         }
-        glm::mat4 projection = m_camera->getProjectionMatrix(aspectRatio);
-        glm::mat4 view = m_camera->getViewMatrix();
-    
-        // Bind offscreen shader pipeline for scene objects
-        m_offscreenShader->bind(commandBuffer);
-        
-        // Reset dynamic UBO index for new frame
-        m_offscreenShader->resetObjectIndex();
-    
-        // Render all scene objects
-        uint32_t objectDrawIndex = 0;
-        for (size_t i = 0; i < m_sceneObjects.size(); i++) {
-            SceneObject& obj = m_sceneObjects[i];
-            if (!obj.visible) continue;
-            
-            // Build model matrix
-            glm::mat4 model = glm::mat4(1.0f);
-            model = glm::translate(model, obj.position);
-            model = model * glm::mat4_cast(obj.quaternion);
-            model = glm::scale(model, obj.scale);
-            
-            // Determine which mesh to render (GUID-based lookup first)
-            Mesh* meshToRender = m_cube.get();
-            if (!obj.meshGUID.empty()) {
-                // GUID-based lookup (stable across rescans)
-                for (const auto& meshItem : m_contentItems) {
-                    if (meshItem.type == "Mesh" && meshItem.id == obj.meshGUID) {
-                        if (meshItem.name == "Sphere") meshToRender = m_sphere.get();
-                        else if (meshItem.name == "Cylinder") meshToRender = m_cylinder.get();
-                        // Cube is default, no need to check
-                        break;
-                    }
-                }
-            } else if (obj.meshIndex >= 0 && obj.meshIndex < static_cast<int>(m_contentItems.size())) {
-                // Legacy index-based lookup
-                const auto& meshItem = m_contentItems[obj.meshIndex];
-                if (meshItem.name == "Sphere") {
-                    meshToRender = m_sphere.get();
-                } else if (meshItem.name == "Cylinder") {
-                    meshToRender = m_cylinder.get();
-                }
-            } else {
-                // Last resort: name-based fallback
-                if (obj.name.find("Sphere") != std::string::npos) {
-                    meshToRender = m_sphere.get();
-                } else if (obj.name.find("Cylinder") != std::string::npos) {
-                    meshToRender = m_cylinder.get();
-                }
+
+        // The scene shader's pipeline (Hybrid RT draws with the ray-traced version), the lights, and the texture table
+        const int solidPipeline = hybrid ? m_pipelineHybrid : 0;
+        auto bindSceneShader = [&](int pipeline) {
+            m_offscreenShader->bind(commandBuffer, pipeline);
+            m_lighting->bind(commandBuffer, m_offscreenShader->getPipelineLayout(), 1, lightingFrame, SceneLighting::Slot::Scene);
+            if (m_textureTable) {
+                const VkDescriptorSet table = m_textureTable->getSet(lightingFrame);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_offscreenShader->getPipelineLayout(), 2, 1, &table, 0, nullptr);
             }
-            
-            // Get material render info - evaluates node graph if material is assigned
-            MaterialRenderInfo renderInfo = getMaterialRenderInfo(obj);
-            
-            // Build the PBR Uniform Buffer Object
-            UniformBufferObject ubo = {};
-            ubo.model = model;
-            ubo.view = view;
-            ubo.projection = projection;
-            ubo.colorAndExposure = glm::vec4(renderInfo.baseColor, m_exposure);
-            
-            // Material parameters (defaults if not textured)
-            ubo.materialParams = glm::vec4(renderInfo.metallic, renderInfo.roughness, renderInfo.ao, 0.0f);
-            
-            // Texture flags - will be adjusted based on what's actually loaded
-            float useAlbedo = 0.0f, useMetallic = 0.0f, useRoughness = 0.0f, useNormal = 0.0f;
-            float useAO = 0.0f, useEmissive = 0.0f, useHeight = 0.0f;
-            
-            // Check and bind each texture
-            if (renderInfo.useAlbedoTexture && !renderInfo.albedoTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.albedoTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useAlbedo = 1.0f;
-                }
-            }
-            if (renderInfo.useMetallicTexture && !renderInfo.metallicTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.metallicTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useMetallic = 1.0f;
-                }
-            }
-            if (renderInfo.useRoughnessTexture && !renderInfo.roughnessTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.roughnessTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useRoughness = 1.0f;
-                }
-            }
-            if (renderInfo.useNormalTexture && !renderInfo.normalTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.normalTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useNormal = 1.0f;
-                }
-            }
-            if (renderInfo.useAOTexture && !renderInfo.aoTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.aoTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useAO = 1.0f;
-                }
-            }
-            if (renderInfo.useEmissiveTexture && !renderInfo.emissiveTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.emissiveTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useEmissive = 1.0f;
-                }
-            }
-            if (renderInfo.useHeightTexture && !renderInfo.heightTexturePath.empty()) {
-                CachedTexture* tex = getOrLoadTexture(renderInfo.heightTexturePath);
-                if (tex && tex->view != VK_NULL_HANDLE) {
-                    useHeight = 1.0f;
-                }
-            }
-            
-            ubo.textureFlags = glm::vec4(useAlbedo, useMetallic, useRoughness, useNormal);
-            ubo.textureFlags2 = glm::vec4(useAO, useEmissive, useHeight, 0.0f);
-            ubo.invertFlags = glm::vec4(
-                renderInfo.invertMetallic ? 1.0f : 0.0f,
-                renderInfo.invertRoughness ? 1.0f : 0.0f,
-                renderInfo.invertNormal ? 1.0f : 0.0f,
-                renderInfo.invertAO ? 1.0f : 0.0f
-            );
-            ubo.textureStrengths = glm::vec4(
-                renderInfo.metallicStrength,
-                renderInfo.roughnessStrength,
-                renderInfo.normalStrength,
-                renderInfo.aoStrength
-            );
-            
-            // Emissive color (RGB = color, A = emissive texture strength)
-            ubo.emissiveColor = glm::vec4(renderInfo.emissiveColor, renderInfo.emissiveStrength);
-            
-            // Height map parameters (x=scale, y=invert)
-            ubo.heightParams = glm::vec4(
-                renderInfo.heightStrength,
-                renderInfo.invertHeight ? 1.0f : 0.0f,
-                0.0f,
-                0.0f
-            );
-            
-            // Camera position for specular
-            ubo.cameraPos = m_camera->getPosition();
-            
-            // Update dynamic UBO at current object index and bind with proper offset
-            m_offscreenShader->updateUniformBufferDynamic(m_vulkanContext->getCurrentFrame(), ubo);
-            m_offscreenShader->bindWithDynamicOffset(commandBuffer, m_vulkanContext->getCurrentFrame(), objectDrawIndex);
-            meshToRender->draw(commandBuffer);
-            objectDrawIndex++;
+        };
+        bindSceneShader(solidPipeline);
+
+        for (const SceneDraw& draw : draws) {
+            if (draw.blendMode == BlendMode::Translucent) continue;  // after everything solid, below
+            m_offscreenShader->setCullMode(commandBuffer, draw.twoSided);
+            m_offscreenShader->bindWithDynamicOffset(commandBuffer, lightingFrame, draw.block);
+            draw.mesh->draw(commandBuffer);
         }
+        m_offscreenShader->setCullMode(commandBuffer, false);
         
+        // Editor-only pictures of Camera components (never drawn while playing, like Unreal's camera gizmo).
+        // camera.fbx is about one unit long with its origin at the lens, modeled looking down -Z with Y up; the world
+        // is Z up and looks along +Y, so the model is turned a quarter about X (CameraSettings::meshCorrection).
+        if (!m_isPlaying && m_cameraMesh) {
+            for (const SceneObject& obj : m_sceneObjects) {
+                CameraSettings cam;
+                if (!obj.visible || !cameraOf(obj, cam)) continue;
+
+                UniformBufferObject ubo = {};
+                ubo.model = cameraWorldMatrix(obj, cam) * CameraSettings::meshCorrection();
+                ubo.view = view;
+                ubo.projection = projection;
+                ubo.colorAndExposure = glm::vec4(0.35f, 0.65f, 1.0f, m_exposure);
+                ubo.materialParams = glm::vec4(0.0f, 0.6f, 1.0f, 0.0f);  // not metallic, fairly rough, no occlusion
+                ubo.textureFlags = glm::vec4(0.0f);
+                ubo.textureFlags2 = glm::vec4(0.0f);
+                ubo.invertFlags = glm::vec4(0.0f);
+                ubo.textureStrengths = glm::vec4(1.0f);
+                ubo.emissiveColor = glm::vec4(0.0f);
+                ubo.heightParams = glm::vec4(0.0f);
+                ubo.cameraPos = m_camera->getPosition();
+
+                m_offscreenShader->updateUniformBufferDynamic(m_vulkanContext->getCurrentFrame(), ubo);
+                m_offscreenShader->bindWithDynamicOffset(commandBuffer, m_vulkanContext->getCurrentFrame(), objectDrawIndex);
+                m_cameraMesh->draw(commandBuffer);
+                objectDrawIndex++;
+            }
+        }
+
+        // Editor-only pictures of Light components (never drawn while playing): a small bulb for a point light, and for
+        // the sun a disc with an arrow along the way it shines.
+        if (!m_isPlaying) {
+            for (const SceneObject& obj : m_sceneObjects) {
+                LightSettings light;
+                if (!obj.visible || !lightOf(obj, light)) continue;
+                const glm::mat4 place = glm::translate(glm::mat4(1.0f), obj.position) * glm::mat4_cast(obj.quaternion);
+                drawLightIcon(commandBuffer, light, place, view, projection, m_camera->getPosition(), lightingFrame, objectDrawIndex);
+            }
+        }
+
         // Render world grid AFTER all opaque scene objects
         // This allows proper depth testing - grid will be occluded by objects in front
-        // and will occlude objects behind the Z=0 plane
-        if (m_showWorldGrid && m_worldGrid) {
+        // and will occlude objects behind the Z=0 plane. Editor only: Play shows just the game.
+        if (!m_isPlaying && m_showWorldGrid && m_worldGrid) {
             m_worldGrid->render(commandBuffer, m_camera.get(), aspectRatio);
+        }
+
+        // See-through surfaces are blended over everything drawn so far, the farthest first (by the middle of each object), and don't
+        // hide what is behind them in the depth buffer. Sorting whole objects is enough for a pane of glass in front of a wall; two panes
+        // that cross each other, or one object seen through itself, can be out of order.
+        std::vector<const SceneDraw*> seeThrough;
+        for (const SceneDraw& draw : draws) {
+            if (draw.blendMode == BlendMode::Translucent) seeThrough.push_back(&draw);
+        }
+        if (!seeThrough.empty()) {
+            const glm::vec3 eye = m_camera->getPosition();
+            auto distance2 = [&](const SceneDraw* draw) {
+                const glm::vec3 center = glm::vec3(draw->model * glm::vec4(draw->mesh->getBoundsCenter(), 1.0f));
+                return glm::dot(center - eye, center - eye);
+            };
+            std::stable_sort(seeThrough.begin(), seeThrough.end(), [&](const SceneDraw* a, const SceneDraw* b) { return distance2(a) > distance2(b); });
+            bindSceneShader(hybrid ? m_pipelineHybridBlend : m_pipelineBlend);
+            for (const SceneDraw* draw : seeThrough) {
+                m_offscreenShader->setCullMode(commandBuffer, draw->twoSided);
+                m_offscreenShader->bindWithDynamicOffset(commandBuffer, lightingFrame, draw->block);
+                draw->mesh->draw(commandBuffer);
+            }
+            m_offscreenShader->setCullMode(commandBuffer, false);
         }
         
         vkCmdEndRenderPass(commandBuffer);
+
+        // The ray tracing debug view replaces the finished picture with what primary rays hit
+        if (m_rayTracing && m_rayDebug && m_rayDebugView != 0) {
+            m_rayDebug->render(commandBuffer, lightingFrame, *m_rayTracing, m_vulkanContext->getOffscreenImage(),
+                               m_vulkanContext->getOffscreenImageView(), m_vulkanContext->getOffscreenExtent(), projection * view,
+                               m_camera->getPosition(),
+                               m_rayDebugView == 2 ? RayDebugPass::Mode::Instances : RayDebugPass::Mode::Normals);
+        }
     }
     
     // STEP 2: Render selection mask (always render to keep it updated)
@@ -823,8 +822,8 @@ void Engine::render() {
         maskScissor.extent = maskExtent;
         vkCmdSetScissor(commandBuffer, 0, 1, &maskScissor);
         
-        // Only draw into mask if an object is selected
-        if (m_selectedObjectIndex >= 0 && m_selectedObjectIndex < static_cast<int>(m_sceneObjects.size())) {
+        // Only draw into mask if an object is selected (no selection outline while playing)
+        if (!m_isPlaying && m_selectedObjectIndex >= 0 && m_selectedObjectIndex < static_cast<int>(m_sceneObjects.size())) {
             // Set up matrices (same as scene)
             float aspectRatio = static_cast<float>(maskExtent.width) / static_cast<float>(maskExtent.height);
             if (m_viewportSize.x > 0 && m_viewportSize.y > 0) {
@@ -848,35 +847,11 @@ void Engine::render() {
             model = model * glm::mat4_cast(selectedObj.quaternion);
             model = glm::scale(model, selectedObj.scale);
             
-            // Determine which mesh to render (GUID-based lookup first)
-            Mesh* meshToRender = m_cube.get();
-            if (!selectedObj.meshGUID.empty()) {
-                // GUID-based lookup (stable across rescans)
-                for (const auto& meshItem : m_contentItems) {
-                    if (meshItem.type == "Mesh" && meshItem.id == selectedObj.meshGUID) {
-                        if (meshItem.name == "Sphere") meshToRender = m_sphere.get();
-                        else if (meshItem.name == "Cylinder") meshToRender = m_cylinder.get();
-                        break;
-                    }
-                }
-            } else if (selectedObj.meshIndex >= 0 && selectedObj.meshIndex < static_cast<int>(m_contentItems.size())) {
-                // Legacy index-based lookup
-                const auto& meshItem = m_contentItems[selectedObj.meshIndex];
-                if (meshItem.name == "Sphere") {
-                    meshToRender = m_sphere.get();
-                } else if (meshItem.name == "Cylinder") {
-                    meshToRender = m_cylinder.get();
-                }
-            } else {
-                // Last resort: name-based fallback
-                if (selectedObj.name.find("Sphere") != std::string::npos) {
-                    meshToRender = m_sphere.get();
-                } else if (selectedObj.name.find("Cylinder") != std::string::npos) {
-                    meshToRender = m_cylinder.get();
-                }
-            }
-            
+            // (No mesh, no outline: there is nothing to outline.)
+            Mesh* meshToRender = getMeshForObject(selectedObj);
+
             // Render the selected object into the mask
+            if (meshToRender) {
             UniformBufferObject ubo = {};
             ubo.model = model;
             ubo.view = view;
@@ -895,6 +870,7 @@ void Engine::render() {
             m_maskShader->updateUniformBufferDynamic(m_vulkanContext->getCurrentFrame(), ubo);
             m_maskShader->bindWithDynamicOffset(commandBuffer, m_vulkanContext->getCurrentFrame(), 0);
             meshToRender->draw(commandBuffer);
+            }
         }
         
         vkCmdEndRenderPass(commandBuffer);
@@ -907,8 +883,8 @@ void Engine::render() {
         // STEP 2.6: Execute composite pass (extracts outline and blends over scene)
         m_vulkanContext->executeCompositePass(commandBuffer, 1.0f, m_outlineColor.r, m_outlineColor.g, m_outlineColor.b);
         
-        // STEP 2.7: Render gizmo on top of everything (2-pass MSAA approach)
-        if (m_selectedObjectIndex >= 0 && m_selectedObjectIndex < static_cast<int>(m_sceneObjects.size())) {
+        // STEP 2.7: Render gizmo on top of everything (2-pass MSAA approach). Not while playing.
+        if (!m_isPlaying && m_selectedObjectIndex >= 0 && m_selectedObjectIndex < static_cast<int>(m_sceneObjects.size())) {
             VkExtent2D gizmoExtent = m_vulkanContext->getSelectionMaskExtent();
             
             // PASS 1: Render gizmo to MSAA buffer, resolve to gizmo image
@@ -988,7 +964,10 @@ void Engine::render() {
     if (m_activeTabIndex >= 0 && m_activeTabIndex < static_cast<int>(m_tabs.size())) {
         Tab& activeTab = m_tabs[m_activeTabIndex];
         if (activeTab.type == TabType::AssetEditor) {
-            renderAssetPreview(activeTab, commandBuffer);
+            // (An Input Action or Mapping has nothing to draw: its editor is a table.)
+            const bool isInputAsset = activeTab.contentItemIndex >= 0 && activeTab.contentItemIndex < static_cast<int>(m_contentItems.size()) &&
+                                      (m_contentItems[activeTab.contentItemIndex].type == "InputAction" || m_contentItems[activeTab.contentItemIndex].type == "InputMapping");
+            if (!isInputAsset) renderAssetPreview(activeTab, commandBuffer);
         }
     }
     
@@ -1050,6 +1029,12 @@ glm::vec3 Engine::getMaterialColorForObject(const SceneObject& obj) const {
     return materialItem.materialColor;  // Fallback
 }
 
+RenderMode Engine::activeRenderMode() const {
+    const bool hybridReady = m_rayTracing && m_rayTracing->available() && m_offscreenShader && m_offscreenShader->hasVariant(m_pipelineHybrid) &&
+                             m_offscreenShader->hasVariant(m_pipelineHybridBlend);
+    return effectiveRenderMode(m_environment.renderMode, hybridReady);
+}
+
 Engine::MaterialRenderInfo Engine::getMaterialRenderInfo(const SceneObject& obj) const {
     MaterialRenderInfo info;
     // Defaults are set in the struct definition
@@ -1072,6 +1057,7 @@ Engine::MaterialRenderInfo Engine::getMaterialRenderInfo(const SceneObject& obj)
         }
     }
     
+    info.settings = materialItem.materialSettings;
     if (outputNodeId < 0) {
         info.baseColor = materialItem.materialColor;
         return info;
@@ -1152,6 +1138,18 @@ Engine::MaterialRenderInfo Engine::getMaterialRenderInfo(const SceneObject& obj)
         }
     }
     
+    // Pins 9 and 10: Opacity and Opacity Mask. A cut-out material prefers the mask, a see-through one the opacity.
+    {
+        const MaterialNodeData* masked = getSourceNode(10);
+        const MaterialNodeData* opacity = getSourceNode(9);
+        const MaterialNodeData* source = (materialItem.materialSettings.blendMode == BlendMode::Masked) ? (masked ? masked : opacity) : (opacity ? opacity : masked);
+        if (source && source->nodeType == "Image" && !source->texturePath.empty()) {
+            info.useOpacityTexture = true;
+            info.opacityTexturePath = source->texturePath;
+        }
+    }
+    info.settings = materialItem.materialSettings;
+
     // Pin 8: Ambient Occlusion
     if (auto* node = getSourceNode(8)) {
         if (node->nodeType == "Image" && !node->texturePath.empty()) {
@@ -1237,12 +1235,17 @@ Engine::CachedTexture* Engine::getOrLoadTexture(const std::string& path) {
     imageInfo.extent.width = static_cast<uint32_t>(width);
     imageInfo.extent.height = static_cast<uint32_t>(height);
     imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
+    // A chain of smaller mips, so a texture seen from far away is averaged instead of sparkling
+    uint32_t mipLevels = 1;
+    for (int32_t size = (std::max)(width, height); size > 1; size /= 2) mipLevels++;
+    imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = 1;
     imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    // The same picture is read two ways: as colour (decoded from sRGB) and as data (roughness, normals, opacity: as it is stored)
+    imageInfo.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     
@@ -1269,10 +1272,9 @@ Engine::CachedTexture* Engine::getOrLoadTexture(const std::string& path) {
     
     vkBindImageMemory(device, tex.image, tex.memory, 0);
     
-    // Transition and copy
+    // Copy the picture into the first mip, then make each smaller mip from the one above it
     VkCommandBuffer commandBuffer = m_vulkanContext->beginSingleTimeCommands();
-    
-    // Transition to transfer destination
+
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1280,40 +1282,62 @@ Engine::CachedTexture* Engine::getOrLoadTexture(const std::string& path) {
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.image = tex.image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, 1};
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    
     vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
-    
-    // Copy buffer to image
+
     VkBufferImageCopy region{};
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-    region.imageOffset = {0, 0, 0};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1};
-    
     vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    
-    // Transition to shader read
+
+    int32_t mipWidth = width;
+    int32_t mipHeight = height;
+    for (uint32_t level = 1; level < mipLevels; level++) {
+        // The mip above is written: read from it
+        barrier.subresourceRange.baseMipLevel = level - 1;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        const int32_t nextWidth = (std::max)(1, mipWidth / 2);
+        const int32_t nextHeight = (std::max)(1, mipHeight / 2);
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
+        blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+        blit.dstOffsets[1] = {nextWidth, nextHeight, 1};
+        vkCmdBlitImage(commandBuffer, tex.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1, &blit, VK_FILTER_LINEAR);
+
+        // The mip above is finished: shaders may read it
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        mipWidth = nextWidth;
+        mipHeight = nextHeight;
+    }
+
+    // The smallest mip (or the only one) is still the transfer destination
+    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+    barrier.subresourceRange.levelCount = 1;
     barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
-    
+
     m_vulkanContext->endSingleTimeCommands(commandBuffer);
     
     // Clean up staging buffer
@@ -1328,11 +1352,19 @@ Engine::CachedTexture* Engine::getOrLoadTexture(const std::string& path) {
     viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.levelCount = mipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
     
     if (vkCreateImageView(device, &viewInfo, nullptr, &tex.view) != VK_SUCCESS) {
+        vkDestroyImage(device, tex.image, nullptr);
+        vkFreeMemory(device, tex.memory, nullptr);
+        return nullptr;
+    }
+
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;  // the same image, read as data
+    if (vkCreateImageView(device, &viewInfo, nullptr, &tex.dataView) != VK_SUCCESS) {
+        vkDestroyImageView(device, tex.view, nullptr);
         vkDestroyImage(device, tex.image, nullptr);
         vkFreeMemory(device, tex.memory, nullptr);
         return nullptr;
@@ -1353,14 +1385,23 @@ Engine::CachedTexture* Engine::getOrLoadTexture(const std::string& path) {
     samplerInfo.compareEnable = VK_FALSE;
     samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = static_cast<float>(mipLevels);
     
     if (vkCreateSampler(device, &samplerInfo, nullptr, &tex.sampler) != VK_SUCCESS) {
+        vkDestroyImageView(device, tex.dataView, nullptr);
         vkDestroyImageView(device, tex.view, nullptr);
         vkDestroyImage(device, tex.image, nullptr);
         vkFreeMemory(device, tex.memory, nullptr);
         return nullptr;
     }
     
+    // Give it its places in the texture table the shaders index: one for reading it as colour, one as data
+    if (m_textureTable) {
+        tex.slotColor = m_textureTable->add(tex.view, tex.sampler);
+        tex.slotData = m_textureTable->add(tex.dataView, tex.sampler);
+    }
+
     // Cache and return
     m_textureCache[path] = tex;
     return &m_textureCache[path];
@@ -1371,6 +1412,7 @@ void Engine::cleanupTextureCache() {
     for (auto& pair : m_textureCache) {
         CachedTexture& tex = pair.second;
         if (tex.sampler != VK_NULL_HANDLE) vkDestroySampler(device, tex.sampler, nullptr);
+        if (tex.dataView != VK_NULL_HANDLE) vkDestroyImageView(device, tex.dataView, nullptr);
         if (tex.view != VK_NULL_HANDLE) vkDestroyImageView(device, tex.view, nullptr);
         if (tex.image != VK_NULL_HANDLE) vkDestroyImage(device, tex.image, nullptr);
         if (tex.memory != VK_NULL_HANDLE) vkFreeMemory(device, tex.memory, nullptr);
@@ -1416,6 +1458,7 @@ void Engine::shutdown() {
     m_gizmoTorus.reset();
     m_gizmoCone.reset();
     m_gizmoCube.reset();
+    m_cameraMesh.reset();
     m_cylinder.reset();
     m_sphere.reset();
     m_cube.reset();
@@ -1423,6 +1466,13 @@ void Engine::shutdown() {
     m_maskShader.reset();
     m_offscreenShader.reset();
     m_shader.reset();
+    if (m_environmentLoad.valid()) m_environmentLoad.wait();  // a sky still being read has nothing left to do
+    m_rayDebug.reset();
+    m_rayTracing.reset();
+    m_textureTable.reset();
+    m_ambientOcclusion.reset();
+    m_shadows.reset();
+    m_lighting.reset();
     CrashHandler::logInfo("Shaders and meshes destroyed");
     
     // VulkanContext will be destroyed by unique_ptr, then Window
@@ -1565,8 +1615,8 @@ void Engine::renderSceneTab() {
         bool isDraggingOverViewport = false;
         glm::vec3 currentDragPosition(0.0f);
         
-        // Drag and drop target for content browser items
-        if (ImGui::BeginDragDropTarget()) {
+        // Drag and drop target for content browser items (not while playing: the scene is restored on Stop)
+        if (!m_isPlaying && ImGui::BeginDragDropTarget()) {
             // Check if we're dragging a content item
             if (const ImGuiPayload* payload = ImGui::GetDragDropPayload()) {
                 if (payload->IsDataType("CONTENT_ITEM")) {
@@ -1680,16 +1730,28 @@ void Engine::renderSceneTab() {
                                 // (and keeps following them if they change).
                                 applyAssetDefaults(newObj);
 
+                                // A light is placed where it is useful: a bulb above the floor, the sun high up and aimed
+                                // down and across (an Object's forward is +Y, so with no turn it would shine sideways).
+                                LightSettings placedLight;
+                                if (lightOf(newObj, placedLight)) {
+                                    if (placedLight.type == LightSettings::Type::Point) {
+                                        newObj.position.z += 3.0f;
+                                    } else {
+                                        newObj.position.z += 6.0f;
+                                        newObj.quaternion = rotationFromForwardTo(glm::vec3(-0.4f, 0.5f, -1.0f));
+                                        syncEulerFromQuaternion(newObj);
+                                    }
+                                }
+
                                 m_sceneObjects.push_back(newObj);
+                                // Ctrl+Z takes it out again
+                                recordAddedObject(m_undoStack, m_redoStack, static_cast<int>(m_sceneObjects.size()) - 1, m_sceneObjects.back(), m_selectedObjectIndex);
                                 m_selectedObjectIndex = static_cast<int>(m_sceneObjects.size() - 1);
-                                
-                                // Push undo state
-                                pushUndoState();
                                 
                                 // Mark project as modified
                                 markProjectModified();
                                 
-                                m_consoleBuffer.push_back("Created object: " + objectName + " at (" + 
+                                OutputLog::info(LogCategory::Editor, "Created object: " + objectName + " at (" + 
                                     std::to_string(spawnPos.x) + ", " + std::to_string(spawnPos.y) + ", " + std::to_string(spawnPos.z) + ")");
                             }
                         }
@@ -1710,6 +1772,9 @@ void Engine::renderSceneTab() {
         m_viewportFocused = ImGui::IsWindowFocused();
         m_viewportPos = ImGui::GetItemRectMin();
         m_viewportSize = ImGui::GetItemRectSize();
+
+        // The render mode picker sits over the viewport's top-right corner; the mouse on it is not the mouse on the scene
+        if (drawRenderModeSelector()) m_viewportHovered = false;
         
         // Check for click in viewport BEFORE rendering buttons
         // This way button clicks won't trigger viewport selection
@@ -1746,7 +1811,7 @@ void Engine::renderSceneTab() {
         }
         
         // Update hover state when not dragging
-        if (!m_gizmoActive && m_viewportHovered && m_selectedObjectIndex >= 0 && m_gizmoMode != GizmoMode::None) {
+        if (!m_isPlaying && !m_gizmoActive && m_viewportHovered && m_selectedObjectIndex >= 0 && m_gizmoMode != GizmoMode::None) {
             ImVec2 mousePos = ImGui::GetMousePos();
             float mouseX = mousePos.x - m_viewportPos.x;
             float mouseY = mousePos.y - m_viewportPos.y;
@@ -1779,8 +1844,8 @@ void Engine::renderSceneTab() {
             m_hoveredGizmoAxis = GizmoAxis::None;
         }
         
-        // Render tool buttons overlay if object is selected
-        if (m_selectedObjectIndex >= 0) {
+        // Render tool buttons overlay if object is selected (editor only, not while playing)
+        if (!m_isPlaying && m_selectedObjectIndex >= 0) {
             renderToolButtons();
         }
         
@@ -1789,7 +1854,7 @@ void Engine::renderSceneTab() {
             char debugMsg[256];
             snprintf(debugMsg, sizeof(debugMsg), "LEFT CLICK: viewportHovered=%d, viewportClicked=%d, anyItemHovered=%d",
                      m_viewportHovered ? 1 : 0, viewportClicked ? 1 : 0, ImGui::IsAnyItemHovered() ? 1 : 0);
-            m_consoleBuffer.push_back(debugMsg);
+            OutputLog::verbose(LogCategory::Editor, debugMsg);
         }
         
         // Process viewport click only if we actually clicked and not on a button
@@ -1799,15 +1864,63 @@ void Engine::renderSceneTab() {
         
         // Debug: Log when we click in viewport but don't process
         if (viewportClicked && ImGui::IsAnyItemHovered()) {
-            m_consoleBuffer.push_back("Viewport click blocked - item hovered");
+            OutputLog::verbose(LogCategory::Editor, "Viewport click blocked - item hovered");
         }
         
         if (viewportClicked && !m_viewportHovered) {
-            m_consoleBuffer.push_back("Viewport click blocked - not hovered");
+            OutputLog::verbose(LogCategory::Editor, "Viewport click blocked - not hovered");
         }
         
-        // FPS display overlay (bottom-right corner)
-        if (m_showFPS) {
+        // Frustum outline for a selected Camera component: what the camera will see (editor only).
+        // It uses the viewport's shape, which is what Play shows for now. Drawn over the scene, not hidden by it.
+        if (!m_isPlaying && m_selectedObjectIndex >= 0 && m_selectedObjectIndex < static_cast<int>(m_sceneObjects.size())) {
+            const SceneObject& selected = m_sceneObjects[m_selectedObjectIndex];
+            CameraSettings cam;
+            if (cameraOf(selected, cam)) {
+                drawCameraFrustum(cam, cameraWorldMatrix(selected, cam), m_camera->getViewMatrix(),
+                                  m_camera->getProjectionMatrix(playAspect()), m_viewportPos, m_viewportSize);
+            }
+        }
+
+        // View > Collision Shapes: the solid shapes the physics uses, laid over the meshes (not hidden by them).
+        // Editor only: Play shows just the game.
+        if (!m_isPlaying && m_showCollisionShapes) {
+            drawCollisionShapes(m_camera->getViewMatrix(), m_camera->getProjectionMatrix(playAspect()), m_viewportPos, m_viewportSize);
+        }
+
+        // Play mode fixtures: a border around the game view and an FPS counter at its top-right corner.
+        // The counter is always on while playing (making it toggleable is a later to-do).
+        if (m_isPlaying) {
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 topLeft = m_viewportPos;
+            ImVec2 bottomRight(m_viewportPos.x + m_viewportSize.x, m_viewportPos.y + m_viewportSize.y);
+            drawList->AddRect(topLeft, bottomRight, IM_COL32(80, 200, 120, 255), 0.0f, 0, 2.0f);
+
+            char fpsText[32];
+            snprintf(fpsText, sizeof(fpsText), "FPS: %.0f", ImGui::GetIO().Framerate);
+            ImVec2 textSize = ImGui::CalcTextSize(fpsText);
+            const float margin = 12.0f;  // from the viewport edge
+            const float pad = 6.0f;      // around the text, inside the background
+            ImVec2 textPos(bottomRight.x - textSize.x - margin - pad, topLeft.y + margin + pad);
+            drawList->AddRectFilled(ImVec2(textPos.x - pad, textPos.y - pad),
+                                    ImVec2(textPos.x + textSize.x + pad, textPos.y + textSize.y + pad),
+                                    IM_COL32(0, 0, 0, 140), 4.0f);
+            drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), fpsText);
+
+            // The cursor is hidden while the mouse is captured, so say how to get out.
+            if (m_playMode && m_playMode->mouseCaptured()) {
+                const char* hint = "Press Esc to stop";
+                ImVec2 hintSize = ImGui::CalcTextSize(hint);
+                ImVec2 hintPos(topLeft.x + margin + pad, bottomRight.y - hintSize.y - margin - pad);
+                drawList->AddRectFilled(ImVec2(hintPos.x - pad, hintPos.y - pad),
+                                        ImVec2(hintPos.x + hintSize.x + pad, hintPos.y + hintSize.y + pad),
+                                        IM_COL32(0, 0, 0, 140), 4.0f);
+                drawList->AddText(hintPos, IM_COL32(255, 255, 255, 200), hint);
+            }
+        }
+
+        // FPS display overlay (bottom-right corner). Playing has its own counter, so this one steps aside.
+        if (m_showFPS && !m_isPlaying) {
             ImVec2 windowPos = ImGui::GetWindowPos();
             ImVec2 windowSize = ImGui::GetWindowSize();
             float fps = ImGui::GetIO().Framerate;
@@ -1843,8 +1956,8 @@ void Engine::renderSceneTab() {
             );
         }
         
-        // Statistics overlay (top-left corner)
-        if (m_showStatistics) {
+        // Statistics overlay (top-left corner): the editor camera's pose, so editor only
+        if (m_showStatistics && !m_isPlaying) {
             ImVec2 windowPos = ImGui::GetWindowPos();
             float padding = 20.0f;
             
@@ -1934,6 +2047,7 @@ void Engine::saveProject(const std::string& filepath) {
     // UI state
     data.showObjectsPanel = m_showObjectsPanel;
     data.showContentBrowser = m_showContentBrowser;
+    data.environment = m_environment;
     
     if (ProjectSerializer::saveProject(filepath, data)) {
         m_currentProjectPath = filepath;
@@ -1944,9 +2058,9 @@ void Engine::saveProject(const std::string& filepath) {
             tab.hasUnsavedChanges = false;
         }
         
-        std::cout << "Project saved successfully!" << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Info, "Project saved successfully!");
     } else {
-        std::cerr << "Failed to save project!" << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Failed to save project!");
     }
 }
 
@@ -2127,6 +2241,7 @@ void Engine::saveAllUnsavedAssets() {
                     
                     // Write splitter ratio
                     matFile.write(reinterpret_cast<const char*>(&item.splitterRatio), sizeof(float));
+                    MaterialSettingsFile::write(matFile, item.materialSettings);
                     
                     matFile.close();
                     CrashHandler::logInfo("Saved material (v5): " + item.name + " with thumbnail");
@@ -2156,7 +2271,7 @@ void Engine::loadProject(const std::string& filepath) {
     ProjectData data;
     
     if (!ProjectSerializer::loadProject(filepath, data)) {
-        std::cerr << "Failed to load project!" << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Failed to load project!");
         return;
     }
     
@@ -2184,6 +2299,8 @@ void Engine::loadProject(const std::string& filepath) {
     
     // Load scene objects
     m_sceneObjects = data.sceneObjects;
+    m_undoStack.clear();  // the steps are about the scene that was open
+    m_redoStack.clear();
     m_selectedObjectIndex = data.selectedObjectIndex;
     
     // Add default cube if scene is empty
@@ -2198,6 +2315,13 @@ void Engine::loadProject(const std::string& filepath) {
     // Load tabs and recreate their framebuffers
     m_tabs = data.tabs;
     m_activeTabIndex = data.activeTabIndex;
+    // A project saved while the old "Debug Output" tab was open: that tab is gone, the Output Log panel replaced it.
+    for (size_t t = m_tabs.size(); t-- > 0;) {
+        if (m_tabs[t].type != TabType::DebugOutput) continue;
+        m_tabs.erase(m_tabs.begin() + t);
+        if (static_cast<int>(t) < m_activeTabIndex) m_activeTabIndex--;
+        else if (static_cast<int>(t) == m_activeTabIndex) m_activeTabIndex = 0;
+    }
     
     for (auto& tab : m_tabs) {
         // TODO: Recreate Vulkan framebuffer resources for tab
@@ -2206,6 +2330,8 @@ void Engine::loadProject(const std::string& filepath) {
     // Load UI state
     m_showObjectsPanel = data.showObjectsPanel;
     m_showContentBrowser = data.showContentBrowser;
+    m_environment = data.environment;
+    m_failedHdriPath.clear();
     
     // Update project state
     m_currentProjectPath = filepath;
@@ -2215,6 +2341,26 @@ void Engine::loadProject(const std::string& filepath) {
     
     // Scan filesystem to populate content browser with all folders
     scanAssetsDirectory(true);
+
+    // A project saved before tabs remembered their asset (file version 3 or older): find each tab's asset by name,
+    // so it is the same asset after this load and opening it again doesn't make a second tab. Without one, drop it.
+    for (size_t t = m_tabs.size(); t-- > 0;) {
+        Tab& tab = m_tabs[t];
+        if (tab.type != TabType::AssetEditor || !tab.assetId.empty()) continue;
+        int found = -1;
+        for (const char* type : {"Object", "Material", "Mesh"}) {
+            for (size_t i = 0; i < m_contentItems.size() && found < 0; i++) {
+                if (m_contentItems[i].type == type && m_contentItems[i].name == tab.name) found = static_cast<int>(i);
+            }
+        }
+        if (found >= 0) {
+            tab.assetId = m_contentItems[found].id;
+            tab.contentItemIndex = found;
+        } else {
+            m_tabs.erase(m_tabs.begin() + t);
+        }
+    }
+    m_activeTabIndex = std::clamp(m_activeTabIndex, 0, static_cast<int>(m_tabs.size()) - 1);
 
     // Placed objects follow their Object asset's defaults except where they override them. A project
     // saved before overrides were recorded: whatever differs from the asset counts as an override.
@@ -2226,7 +2372,7 @@ void Engine::loadProject(const std::string& filepath) {
     // Reset docking layout to refresh UI
     m_dockingLayoutInitialized = false;
     
-    std::cout << "Project loaded successfully!" << std::endl;
+    OutputLog::print(LogCategory::Project, LogLevel::Info, "Project loaded successfully!");
 }
 
 void Engine::newProject() {
@@ -2254,6 +2400,7 @@ void Engine::newProject() {
     m_folders.push_back("Materials");
     m_folders.push_back("Textures");
     m_folders.push_back("Objects");
+    m_folders.push_back("Input");
     std::sort(m_folders.begin(), m_folders.end());  // Sort alphabetically
     m_currentFolder = "Meshes";  // Start in Meshes folder
     
@@ -2297,7 +2444,9 @@ void Engine::newProject() {
     m_undoStack.clear();
     m_redoStack.clear();
     
-    std::cout << "New project created" << std::endl;
+    m_environment = EnvironmentSettings();  // the default sky
+    m_failedHdriPath.clear();
+    OutputLog::print(LogCategory::Project, LogLevel::Info, "New project created");
 }
 
 void Engine::scanAssetsDirectory(bool scanAllFolders) {
@@ -2333,6 +2482,7 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
         std::filesystem::create_directories(assetsDir / "Materials");
         std::filesystem::create_directories(assetsDir / "Textures");
         std::filesystem::create_directories(assetsDir / "Objects");
+        std::filesystem::create_directories(assetsDir / "Input");
     }
     
     // Ensure default meshes are copied to project's Meshes folder
@@ -2434,7 +2584,7 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                     }
                     generateThumbnail(m_contentItems.back(), mesh);
                     
-                } else if (extension == ".fmat") {
+                } else if (extension == ".pmat") {
                     // Material file - load material data
                     ContentItem item(nameWithoutExt, "Material", folderName, relativePathStr);
                     item.creationDate = creationDate;
@@ -2458,7 +2608,7 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                             if (guidLength == 0 || guidLength > 1000) {
                                 CrashHandler::logWarning("Material file '" + nameWithoutExt + "' has invalid GUID length, skipping");
                                 matFile.close();
-                                item.id = ForgeEngine::Utils::generateGUID();
+                                item.id = PropulsionMKI::Utils::generateGUID();
                                 m_contentItems.push_back(item);
                                 generateMaterialThumbnail(m_contentItems.back(), m_contentItems.back().materialColor);
                                 continue;
@@ -2563,6 +2713,9 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                                         item.splitterRatio = 0.5f;
                                     }
                                 }
+
+                                // Whether the material is solid, cut out or see-through (a file from before that has none: solid)
+                                if (matFile.good()) MaterialSettingsFile::read(matFile, item.materialSettings);
                             }
                             
                             CrashHandler::logInfo("Loaded " + std::to_string(item.nodes.size()) + " nodes and " +
@@ -2598,7 +2751,7 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                         generateMaterialThumbnail(m_contentItems.back(), m_contentItems.back().materialColor);
                     }
                     
-                } else if (extension == ".fobj") {
+                } else if (extension == ".pobj") {
                     // Object file - load object data
                     ContentItem item(nameWithoutExt, "Object", folderName, relativePathStr);
                     item.creationDate = creationDate;
@@ -2612,6 +2765,10 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                             item.meshReferenceGUID = data.meshGUID;
                             item.materialReferenceGUID = data.materialGUID;
                             item.scriptFile = data.scriptFile;
+                            item.camera = data.camera;
+                            item.collision = data.collision;
+                            item.inputMappingGUID = data.inputMapping;
+                            item.light = data.light;
                             if (data.version == 1) {
                                 item.meshReference = data.legacyMeshIndex;
                                 item.materialReference = data.legacyMaterialIndex;
@@ -2631,10 +2788,44 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                     
                     // Generate thumbnail - will be done after all items loaded so GUIDs can be resolved
                     
+                } else if (extension == ".pinputaction") {
+                    // Input Action: its name is the file's; the rest is in the file (see project/InputFiles.h)
+                    ContentItem item(nameWithoutExt, "InputAction", folderName, relativePathStr);
+                    item.creationDate = creationDate;
+                    std::ifstream actionFile(entry.path(), std::ios::binary);
+                    InputActionDef def;
+                    if (actionFile.is_open() && InputFiles::readAction(actionFile, def)) {
+                        item.id = def.id;
+                        item.inputAction = def;
+                    } else {
+                        CrashHandler::logWarning("Input Action file '" + nameWithoutExt + "' could not be read");
+                        item.id = PropulsionMKI::Utils::generateGUID();
+                    }
+                    item.inputAction.id = item.id;
+                    item.inputAction.name = nameWithoutExt;
+                    m_contentItems.push_back(item);
+
+                } else if (extension == ".pinputmap") {
+                    // Input Mapping: a table of `action <- key` rows
+                    ContentItem item(nameWithoutExt, "InputMapping", folderName, relativePathStr);
+                    item.creationDate = creationDate;
+                    std::ifstream mapFile(entry.path(), std::ios::binary);
+                    InputMappingDef def;
+                    if (mapFile.is_open() && InputFiles::readMapping(mapFile, def)) {
+                        item.id = def.id;
+                        item.inputMapping = def;
+                    } else {
+                        CrashHandler::logWarning("Input Mapping file '" + nameWithoutExt + "' could not be read");
+                        item.id = PropulsionMKI::Utils::generateGUID();
+                    }
+                    item.inputMapping.id = item.id;
+                    item.inputMapping.name = nameWithoutExt;
+                    m_contentItems.push_back(item);
+
                 } else if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || 
                            extension == ".PNG" || extension == ".JPG" || extension == ".JPEG" ||
                            extension == ".bmp" || extension == ".BMP" || extension == ".tga" || 
-                           extension == ".TGA" || extension == ".hdr" || extension == ".HDR") {
+                           extension == ".TGA") {
                     // Texture file
                     ContentItem item(nameWithoutExt, "Texture", folderName, relativePathStr);
                     item.creationDate = creationDate;
@@ -2652,6 +2843,16 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                     }
                     
                     CrashHandler::logInfo("Loaded texture: " + nameWithoutExt + " from " + fullPath.string());
+
+                } else if (extension == ".hdr" || extension == ".HDR") {
+                    // HDRI: a panorama that lights the scene (see ui/EnvironmentPanel.cpp). Its path is how the project refers to it.
+                    ContentItem item(nameWithoutExt, "HDRI", folderName, relativePathStr);
+                    item.creationDate = creationDate;
+                    item.filepath = entry.path().string();
+                    item.id = PropulsionMKI::Utils::generateGUID();
+                    const VkDescriptorSet thumbnail = hdriThumbnail(item.filepath);
+                    item.thumbnailTexture = thumbnail;
+                    m_contentItems.push_back(item);
                 }
             }
         }
@@ -2662,20 +2863,10 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
     // Generate thumbnails for objects (now that all meshes are loaded)
     for (auto& item : m_contentItems) {
         if (item.type == "Object") {
-            Mesh* mesh = m_cube.get(); // Default
-            
-            // Look up mesh by GUID first
+            // The thumbnail shows the Object's mesh. An Object with no mesh has nothing to show.
+            Mesh* mesh = nullptr;
             if (!item.meshReferenceGUID.empty()) {
-                for (const auto& meshItem : m_contentItems) {
-                    if (meshItem.type == "Mesh" && meshItem.id == item.meshReferenceGUID) {
-                        // Found the mesh - determine which built-in it is
-                        if (meshItem.name == "Cube") mesh = m_cube.get();
-                        else if (meshItem.name == "Sphere") mesh = m_sphere.get();
-                        else if (meshItem.name == "Cylinder") mesh = m_cylinder.get();
-                        // TODO: Support custom meshes
-                        break;
-                    }
-                }
+                mesh = meshByGUID(item.meshReferenceGUID);
             } else if (item.meshReference >= 0 && item.meshReference < 3) {
                 // Legacy index fallback
                 switch (item.meshReference) {
@@ -2684,11 +2875,22 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
                     case 2: mesh = m_cylinder.get(); break;
                 }
             }
-            
+            if (!mesh) {
+                item.thumbnailTexture = VK_NULL_HANDLE;
+                continue;
+            }
+
             generateThumbnail(item, mesh);
         }
     }
     
+    // Scripts are checked against the project's Input Actions. A project with none (a new one, or one from before input
+    // was data) gets the defaults, and its scripted Objects the default mapping, so they keep working.
+    if (scanAllFolders) {
+        ensureDefaultInput();
+        syncScriptInputs();
+    }
+
     // Update tabs to point to correct content items after rescan (using asset ID)
     for (auto& tab : m_tabs) {
         if (tab.type == TabType::AssetEditor && !tab.assetId.empty()) {
@@ -2721,7 +2923,7 @@ void Engine::scanAssetsDirectory(bool scanAllFolders) {
 
 std::string Engine::generateGUID() {
     // Delegate to utility function
-    return ForgeEngine::Utils::generateGUID();
+    return PropulsionMKI::Utils::generateGUID();
 }
 
 void Engine::markProjectModified() {
@@ -2729,7 +2931,7 @@ void Engine::markProjectModified() {
 }
 
 void Engine::renderProjectNameDialog() {
-    ImGui::SetNextWindowSize(ImVec2(ForgeEngine::UI::scaled(400), ForgeEngine::UI::scaled(150)), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(PropulsionMKI::UI::scaled(400), PropulsionMKI::UI::scaled(150)), ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     
     if (ImGui::Begin("New Project", &m_showProjectNameDialog, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse)) {
@@ -2743,17 +2945,17 @@ void Engine::renderProjectNameDialog() {
         ImGui::Separator();
         ImGui::Spacing();
         
-        if (ImGui::Button("Create", ImVec2(ForgeEngine::UI::scaled(120), 0)) || enterPressed) {
+        if (ImGui::Button("Create", ImVec2(PropulsionMKI::UI::scaled(120), 0)) || enterPressed) {
             if (strlen(m_projectNameBuffer) > 0) {
                 m_showProjectNameDialog = false;
                 
                 std::string projectName = std::string(m_projectNameBuffer);
-                std::string selectedPath = ForgeEngine::Platform::showNewProjectFolderDialog(m_window->getNativeWindow(), projectName);
+                std::string selectedPath = PropulsionMKI::Platform::showNewProjectFolderDialog(m_window->getNativeWindow(), projectName);
                 
                 if (!selectedPath.empty()) {
-                    // Create full project path with .fproj file
+                    // Create full project path with .pproj file
                     std::string projectDir = selectedPath + "\\" + projectName;
-                    std::string projectFilePath = projectDir + "\\" + projectName + ".fproj";
+                    std::string projectFilePath = projectDir + "\\" + projectName + ".pproj";
                     newProject();  // Initialize folders and default meshes
                     saveProject(projectFilePath);
                 }
@@ -2762,7 +2964,7 @@ void Engine::renderProjectNameDialog() {
         
         ImGui::SetItemDefaultFocus();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(ForgeEngine::UI::scaled(120), 0))) {
+        if (ImGui::Button("Cancel", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
             m_showProjectNameDialog = false;
         }
         
@@ -2773,7 +2975,7 @@ void Engine::renderProjectNameDialog() {
 void Engine::renderPreferencesWindow() {
     if (!m_showPreferencesWindow) return;
     
-    ImGui::SetNextWindowSize(ImVec2(ForgeEngine::UI::scaled(500), ForgeEngine::UI::scaled(400)), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(PropulsionMKI::UI::scaled(500), PropulsionMKI::UI::scaled(400)), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), 
                              ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
     
@@ -2786,7 +2988,7 @@ void Engine::renderPreferencesWindow() {
         if (ImGui::Checkbox("Match display scale", &m_uiScaleAuto)) {
             // Switching to manual keeps the current look instead of jumping
             if (!m_uiScaleAuto) {
-                m_uiScalePref = ForgeEngine::UI::getUIScale();
+                m_uiScalePref = PropulsionMKI::UI::getUIScale();
             }
             m_uiScaleDirty = true;
             savePreferences();
@@ -2800,7 +3002,7 @@ void Engine::renderPreferencesWindow() {
         // Fixed width, label above: the slider must not resize as the UI rescales under the cursor
         // while dragging, or the mouse->value mapping drifts.
         ImGui::SetNextItemWidth(ImGui::GetWindowWidth() * 0.6f);
-        float percent = (m_uiScaleAuto ? ForgeEngine::UI::getUIScale() : m_uiScalePref) * 100.0f;
+        float percent = (m_uiScaleAuto ? PropulsionMKI::UI::getUIScale() : m_uiScalePref) * 100.0f;
         if (ImGui::SliderFloat("##UIScale", &percent, 50.0f, 300.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp)) {
             m_uiScalePref = percent / 100.0f;
             m_uiScaleAuto = false;
@@ -2817,7 +3019,7 @@ void Engine::renderPreferencesWindow() {
             savePreferences();
         }
         if (ImGui::IsItemHovered()) {
-            ForgeEngine::UI::tooltip("Go back to matching the display scale");
+            PropulsionMKI::UI::tooltip("Go back to matching the display scale");
         }
 
         ImGui::Spacing();
@@ -2857,7 +3059,7 @@ void Engine::renderPreferencesWindow() {
         }
         ImGui::SameLine();
         if (ImGui::Button("?")) {
-            ForgeEngine::UI::tooltip("How quickly exposure adapts to scene changes");
+            PropulsionMKI::UI::tooltip("How quickly exposure adapts to scene changes");
         }
         
         ImGui::Spacing();
@@ -2952,8 +3154,8 @@ void Engine::renderStartupDialog() {
         
         // Center the content
         ImVec2 windowSize = ImGui::GetWindowSize();
-        float dialogWidth = ForgeEngine::UI::scaled(450.0f);
-        float dialogHeight = ForgeEngine::UI::scaled(400.0f);
+        float dialogWidth = PropulsionMKI::UI::scaled(450.0f);
+        float dialogHeight = PropulsionMKI::UI::scaled(400.0f);
         
         ImGui::SetCursorPos(ImVec2((windowSize.x - dialogWidth) * 0.5f, (windowSize.y - dialogHeight) * 0.5f));
         
@@ -2966,9 +3168,9 @@ void Engine::renderStartupDialog() {
         
         // Title
         ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use default font
-        float titleWidth = ImGui::CalcTextSize("Forge Engine").x;
+        float titleWidth = ImGui::CalcTextSize("Propulsion MK I").x;
         ImGui::SetCursorPosX((dialogWidth - titleWidth) * 0.5f);
-        ImGui::Text("Forge Engine");
+        ImGui::Text("Propulsion MK I");
         ImGui::PopFont();
         
         ImGui::Spacing();
@@ -2978,8 +3180,8 @@ void Engine::renderStartupDialog() {
         ImGui::Spacing();
         
         // Center buttons
-        float buttonWidth = ForgeEngine::UI::scaled(200.0f);
-        float buttonHeight = ForgeEngine::UI::scaled(40.0f);
+        float buttonWidth = PropulsionMKI::UI::scaled(200.0f);
+        float buttonHeight = PropulsionMKI::UI::scaled(40.0f);
         ImGui::SetCursorPosX((dialogWidth - buttonWidth) * 0.5f);
         
         if (ImGui::Button("Create New Project", ImVec2(buttonWidth, buttonHeight))) {
@@ -2998,7 +3200,7 @@ void Engine::renderStartupDialog() {
             m_engineInitialized = true;
             
 #ifdef _WIN32
-            std::string filepath = ForgeEngine::Platform::showOpenFileDialog(m_window->getNativeWindow());
+            std::string filepath = PropulsionMKI::Platform::showOpenFileDialog(m_window->getNativeWindow());
             if (!filepath.empty()) {
                 loadProject(filepath);
             } else {
@@ -3042,7 +3244,7 @@ void Engine::renderExitConfirmationDialog() {
             ImGui::Separator();
             ImGui::Spacing();
             
-            float buttonWidth = ForgeEngine::UI::scaled(110.0f);
+            float buttonWidth = PropulsionMKI::UI::scaled(110.0f);
             float totalWidth = buttonWidth * 3 + ImGui::GetStyle().ItemSpacing.x * 2;
             float startX = (ImGui::GetContentRegionAvail().x - totalWidth) * 0.5f;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
@@ -3092,7 +3294,7 @@ void Engine::renderExitConfirmationDialog() {
             ImGui::Separator();
             ImGui::Spacing();
             
-            float buttonWidth = ForgeEngine::UI::scaled(100.0f);
+            float buttonWidth = PropulsionMKI::UI::scaled(100.0f);
             float totalWidth = buttonWidth * 2 + ImGui::GetStyle().ItemSpacing.x;
             float startX = (ImGui::GetContentRegionAvail().x - totalWidth) * 0.5f;
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
@@ -3145,7 +3347,7 @@ void Engine::renderTabCloseConfirmationDialog() {
         ImGui::Separator();
         ImGui::Spacing();
         
-        float buttonWidth = ForgeEngine::UI::scaled(110.0f);
+        float buttonWidth = PropulsionMKI::UI::scaled(110.0f);
         float totalWidth = buttonWidth * 3 + ImGui::GetStyle().ItemSpacing.x * 2;
         float startX = (ImGui::GetContentRegionAvail().x - totalWidth) * 0.5f;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + startX);
@@ -3323,6 +3525,7 @@ void Engine::renderTabCloseConfirmationDialog() {
                             
                             // Write splitter ratio
                             matFile.write(reinterpret_cast<const char*>(&item.splitterRatio), sizeof(float));
+                            MaterialSettingsFile::write(matFile, item.materialSettings);
                             
                             matFile.close();
                             CrashHandler::logInfo("Saved material (v5) before closing tab: " + item.name);
@@ -3400,13 +3603,13 @@ void Engine::renderMenuBar() {
             
             if (ImGui::MenuItem("Open Project...")) {
 #ifdef _WIN32
-                std::string filepath = ForgeEngine::Platform::showOpenFileDialog(m_window->getNativeWindow());
+                std::string filepath = PropulsionMKI::Platform::showOpenFileDialog(m_window->getNativeWindow());
                 if (!filepath.empty()) {
                     loadProject(filepath);
                 }
 #else
                 // For non-Windows, use test path
-                loadProject("test_project.fproj");
+                loadProject("test_project.pproj");
 #endif
             }
             
@@ -3460,6 +3663,11 @@ void Engine::renderMenuBar() {
             if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !m_redoStack.empty())) {
                 redo();
             }
+
+            ImGui::Separator();
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, m_selectedObjectIndex >= 0 && !m_isPlaying)) {
+                duplicateObject(m_selectedObjectIndex);
+            }
             
             ImGui::EndMenu();
         }
@@ -3467,23 +3675,30 @@ void Engine::renderMenuBar() {
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Objects Panel", nullptr, &m_showObjectsPanel);
             ImGui::MenuItem("Content Browser", nullptr, &m_showContentBrowser);
+            if (ImGui::MenuItem("Output Log", nullptr, &m_showOutputLog)) savePreferences();
             ImGui::MenuItem("World Grid", nullptr, &m_showWorldGrid);
+            ImGui::MenuItem("Collision Shapes", "F4", &m_showCollisionShapes);
             ImGui::Separator();
             ImGui::MenuItem("FPS Counter", "F3", &m_showFPS);
             ImGui::MenuItem("Statistics", nullptr, &m_showStatistics);
             
-            // Debug Output opens as a tab
-            if (ImGui::MenuItem("Debug Output")) {
-                openDebugOutputTab();
-            }
             
             ImGui::EndMenu();
         }
 
-        // Play / Stop: runs ForgeScript scripts on a copy of the scene
-        if (ImGui::MenuItem(m_isPlaying ? "Stop" : "Play")) {
-            if (m_isPlaying) stopPlay();
-            else startPlay();
+        // Play / Stop button, centered in the menu bar: runs PropulsionScript scripts on a copy of the scene
+        {
+            const char* label = m_isPlaying ? "  Stop  " : "  Play  ";
+            const ImVec4 base = m_isPlaying ? ImVec4(0.75f, 0.25f, 0.25f, 1.0f) : ImVec4(0.20f, 0.60f, 0.35f, 1.0f);
+            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(label).x) * 0.5f);
+            ImGui::PushStyleColor(ImGuiCol_Button, base);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(base.x + 0.1f, base.y + 0.1f, base.z + 0.1f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(base.x - 0.05f, base.y - 0.05f, base.z - 0.05f, 1.0f));
+            if (ImGui::SmallButton(label)) {
+                if (m_isPlaying) stopPlay();
+                else startPlay();
+            }
+            ImGui::PopStyleColor(3);
         }
 
         // Show project status in menu bar
@@ -3504,11 +3719,11 @@ void Engine::renderMenuBar() {
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion
 
 
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::openProject(const std::string& filepath) {
     m_showStartupDialog = false;
@@ -3516,9 +3731,9 @@ void Engine::openProject(const std::string& filepath) {
     loadProject(filepath);
 }
 
-} // namespace Forge
+} // namespace Propulsion
 
-namespace Forge {
+namespace Propulsion {
 
 int Engine::materialIndexOf(const SceneObject& obj) const {
     if (!obj.materialGUID.empty()) {
@@ -3546,6 +3761,345 @@ const ContentItem* Engine::sourceAssetOf(const SceneObject& obj) const {
         if (item.type == "Object" && item.id == obj.sourceObjectGUID) return &item;
     }
     return nullptr;  // placed from an asset that isn't in the project any more: it keeps what it has
+}
+
+bool Engine::cameraOf(const SceneObject& obj, CameraSettings& out) const {
+    const ContentItem* asset = sourceAssetOf(obj);
+    if (!asset || !asset->camera.enabled) return false;
+    out = asset->camera;
+    return true;
+}
+
+bool Engine::lightOf(const SceneObject& obj, LightSettings& out) const {
+    const ContentItem* asset = sourceAssetOf(obj);
+    if (!asset || !asset->light.enabled) return false;
+    out = asset->light;
+    return true;
+}
+
+std::vector<SceneLight> Engine::collectSceneLights() const {
+    std::vector<SceneLight> lights;
+    for (const SceneObject& obj : m_sceneObjects) {
+        LightSettings settings;
+        if (!obj.visible || !lightOf(obj, settings)) continue;
+        SceneLight light;
+        light.settings = settings;
+        light.position = obj.position;
+        light.direction = lightTravelDirection(obj.quaternion);
+        lights.push_back(light);
+    }
+    return lights;
+}
+
+glm::mat4 Engine::cameraWorldMatrix(const SceneObject& obj, const CameraSettings& cam) const {
+    return Propulsion::cameraWorldMatrix(obj.position, obj.quaternion, cam, obj.lookPitch);
+}
+
+Mesh* Engine::meshByGUID(const std::string& guid) const {
+    if (guid.empty()) return nullptr;  // no mesh set: nothing to draw
+    for (const ContentItem& item : m_contentItems) {
+        if (item.type != "Mesh" || item.id != guid) continue;
+        if (item.name == "Sphere") return m_sphere.get();
+        if (item.name == "Cylinder") return m_cylinder.get();
+        return m_cube.get();  // Cube, and for now a cube stands in for imported meshes (they can't be drawn yet)
+    }
+    return nullptr;  // names a mesh that isn't in the project (any more)
+}
+
+SceneObject Engine::proxyObjectOf(const ContentItem& objectAsset) const {
+    SceneObject proxy(objectAsset.name);
+    proxy.meshGUID = objectAsset.meshReferenceGUID;
+    proxy.materialGUID = objectAsset.materialReferenceGUID;
+    proxy.meshIndex = objectAsset.meshReference;          // older assets only have these
+    proxy.materialIndex = objectAsset.materialReference;
+    return proxy;
+}
+
+void Engine::loadMaterialTextures(const MaterialRenderInfo& info) {
+    const std::string* paths[] = {&info.albedoTexturePath, &info.metallicTexturePath, &info.roughnessTexturePath, &info.normalTexturePath,
+                                  &info.aoTexturePath, &info.emissiveTexturePath, &info.heightTexturePath, &info.opacityTexturePath};
+    const bool use[] = {info.useAlbedoTexture, info.useMetallicTexture, info.useRoughnessTexture, info.useNormalTexture,
+                        info.useAOTexture, info.useEmissiveTexture, info.useHeightTexture, info.useOpacityTexture};
+    for (int i = 0; i < 8; i++) {
+        if (use[i] && !paths[i]->empty()) getOrLoadTexture(*paths[i]);  // loading puts it in the texture table
+    }
+}
+
+Engine::MaterialRenderInfo Engine::materialRenderInfoFrom(const EvaluatedMaterial& evaluated, const MaterialSettings& settings) {
+    MaterialRenderInfo info;
+    info.baseColor = evaluated.baseColor;
+    info.emissiveColor = evaluated.emissiveColor;
+    info.metallic = evaluated.metallic;
+    info.roughness = evaluated.roughness;
+    info.metallicStrength = evaluated.metallicStrength;
+    info.roughnessStrength = evaluated.roughnessStrength;
+    info.normalStrength = evaluated.normalStrength;
+    info.aoStrength = evaluated.aoStrength;
+    info.emissiveStrength = evaluated.emissiveTextureStrength;
+    info.heightStrength = evaluated.heightStrength;
+    info.useAlbedoTexture = evaluated.useAlbedoTexture;
+    info.useMetallicTexture = evaluated.useMetallicTexture;
+    info.useRoughnessTexture = evaluated.useRoughnessTexture;
+    info.useNormalTexture = evaluated.useNormalTexture;
+    info.useAOTexture = evaluated.useAOTexture;
+    info.useEmissiveTexture = evaluated.useEmissiveTexture;
+    info.useHeightTexture = evaluated.useHeightTexture;
+    info.useOpacityTexture = evaluated.useOpacityTexture;
+    info.invertMetallic = evaluated.invertMetallic;
+    info.invertRoughness = evaluated.invertRoughness;
+    info.invertNormal = evaluated.invertNormal;
+    info.invertAO = evaluated.invertAO;
+    info.invertHeight = evaluated.invertHeight;
+    info.albedoTexturePath = evaluated.albedoTexturePath;
+    info.metallicTexturePath = evaluated.metallicTexturePath;
+    info.roughnessTexturePath = evaluated.roughnessTexturePath;
+    info.normalTexturePath = evaluated.normalTexturePath;
+    info.aoTexturePath = evaluated.aoTexturePath;
+    info.emissiveTexturePath = evaluated.emissiveTexturePath;
+    info.heightTexturePath = evaluated.heightTexturePath;
+    info.opacityTexturePath = evaluated.opacityTexturePath;
+    info.settings = settings;
+    return info;
+}
+
+UniformBufferObject Engine::makeMaterialUbo(const MaterialRenderInfo& info, const glm::mat4& model, const glm::mat4& view,
+                                            const glm::mat4& projection, const glm::vec3& cameraPos) {
+    // A texture's place in the table: -1 if it isn't used or didn't load (the shader's flags below say which are used). Colours are read
+    // through the colour view of a picture, everything else through the data view.
+    auto slotOf = [&](bool use, const std::string& path, bool asColor) -> int {
+        if (!use || path.empty()) return -1;
+        CachedTexture* tex = getOrLoadTexture(path);
+        if (!tex) return -1;
+        return asColor ? tex->slotColor : tex->slotData;
+    };
+    const int albedo = slotOf(info.useAlbedoTexture, info.albedoTexturePath, true);
+    const int metallic = slotOf(info.useMetallicTexture, info.metallicTexturePath, false);
+    const int roughness = slotOf(info.useRoughnessTexture, info.roughnessTexturePath, false);
+    const int normal = slotOf(info.useNormalTexture, info.normalTexturePath, false);
+    const int occlusion = slotOf(info.useAOTexture, info.aoTexturePath, false);
+    const int emissive = slotOf(info.useEmissiveTexture, info.emissiveTexturePath, true);
+    const int height = slotOf(info.useHeightTexture, info.heightTexturePath, false);
+    const int opacity = slotOf(info.useOpacityTexture, info.opacityTexturePath, false);
+    auto flag = [](int slot) { return slot >= 0 ? 1.0f : 0.0f; };
+
+    UniformBufferObject ubo = {};
+    ubo.model = model;
+    ubo.view = view;
+    ubo.projection = projection;
+    ubo.colorAndExposure = glm::vec4(info.baseColor, m_exposure);
+    ubo.materialParams = glm::vec4(info.metallic, info.roughness, info.ao, 0.0f);
+    ubo.textureFlags = glm::vec4(flag(albedo), flag(metallic), flag(roughness), flag(normal));
+    ubo.textureFlags2 = glm::vec4(flag(occlusion), flag(emissive), flag(height), 0.0f);
+    ubo.invertFlags = glm::vec4(info.invertMetallic ? 1.0f : 0.0f, info.invertRoughness ? 1.0f : 0.0f,
+                                info.invertNormal ? 1.0f : 0.0f, info.invertAO ? 1.0f : 0.0f);
+    ubo.textureStrengths = glm::vec4(info.metallicStrength, info.roughnessStrength, info.normalStrength, info.aoStrength);
+    ubo.emissiveColor = glm::vec4(info.emissiveColor, info.emissiveStrength);
+    ubo.heightParams = glm::vec4(info.heightStrength, info.invertHeight ? 1.0f : 0.0f, 0.0f, 0.0f);
+    ubo.cameraPos = cameraPos;
+    ubo.textureSlots = glm::ivec4(albedo, metallic, roughness, normal);
+    ubo.textureSlots2 = glm::ivec4(occlusion, emissive, height, opacity);
+    ubo.surfaceParams = glm::vec4(static_cast<float>(info.settings.blendMode), info.settings.opacity, info.settings.maskCutoff,
+                                  info.settings.twoSided ? 1.0f : 0.0f);
+    return ubo;
+}
+
+void Engine::assetPreviewMatrices(const Tab& tab, glm::mat4& view, glm::mat4& projection, glm::vec3& cameraPos) const {
+    // The preview camera orbits the origin in a Z-up world. Yaw turns about Z; pitch is the elevation above the
+    // horizontal, kept between 5 and 89 degrees so it never looks edge-on or flips over.
+    const float yawRad = glm::radians(tab.cameraYaw);
+    const float pitchRad = glm::radians(glm::clamp(tab.cameraPitch, 5.0f, 89.0f));
+    cameraPos = glm::vec3(tab.cameraDistance * cos(pitchRad) * cos(yawRad),
+                          tab.cameraDistance * cos(pitchRad) * sin(yawRad),
+                          tab.cameraDistance * sin(pitchRad));
+    view = glm::lookAt(cameraPos, glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    VkExtent2D extent = m_vulkanContext->getAssetPreviewExtent();
+    const float aspectRatio = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    projection = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
+    projection[1][1] *= -1;  // Flip Y for Vulkan
+}
+
+const SceneObject* Engine::playCameraOwner(CameraSettings& cam) const {
+    // The first object in the scene whose Camera component auto-activates, like Unreal's "Auto Activate for Player".
+    for (const SceneObject& obj : m_sceneObjects) {
+        if (cameraOf(obj, cam) && cam.autoActivate) return &obj;
+    }
+    return nullptr;
+}
+
+InputSetup Engine::inputSetup() const {
+    InputSetup setup;
+    for (const ContentItem& item : m_contentItems) {
+        if (item.type == "InputAction") {
+            InputActionDef a = item.inputAction;
+            a.id = item.id;
+            a.name = item.name;
+            setup.actions.push_back(a);
+        } else if (item.type == "InputMapping") {
+            InputMappingDef m = item.inputMapping;
+            m.id = item.id;
+            m.name = item.name;
+            setup.mappings.push_back(m);
+        }
+    }
+    return setup;
+}
+
+Physics::Body Engine::physicsBodyOf(const SceneObject& obj) const {
+    Physics::Body body;
+    body.scripted = !obj.scriptFile.empty();  // only scripted objects can touch or hit each other (a script can only name those)
+    const ContentItem* asset = sourceAssetOf(obj);
+
+    // An object is as solid as its mesh is big; one with no mesh (a camera on its own, say) has no shape.
+    if (const Mesh* mesh = getMeshForObject(obj)) {
+        body.hasShape = true;
+        body.solid = asset ? asset->collision.solid : true;
+        body.kind = mesh == m_sphere.get()     ? Physics::ShapeKind::Sphere
+                    : mesh == m_cylinder.get() ? Physics::ShapeKind::Cylinder
+                                               : Physics::ShapeKind::Box;
+        body.boundsMin = mesh->getBoundsMin();
+        body.boundsMax = mesh->getBoundsMax();
+    }
+    if (asset && asset->collision.character.enabled) {
+        body.character = true;
+        body.movement = asset->collision.character;
+        body.state.position = obj.position;
+    }
+    return body;
+}
+
+void Engine::buildPlayBodies() {
+    m_playBodies.clear();
+    m_playBodies.reserve(m_sceneObjects.size());
+    for (SceneObject& obj : m_sceneObjects) {
+        obj.collisionEnabled = true;
+        m_playBodies.push_back(physicsBodyOf(obj));
+    }
+}
+
+void Engine::drawCollisionShapes(const glm::mat4& view, const glm::mat4& projection, ImVec2 pos, ImVec2 size) {
+    if (size.x <= 0.0f || size.y <= 0.0f) return;
+    auto toScreen = [&](const glm::vec3& viewPoint) {
+        glm::vec4 clip = projection * glm::vec4(viewPoint, 1.0f);
+        return ImVec2(pos.x + (clip.x / clip.w * 0.5f + 0.5f) * size.x, pos.y + (clip.y / clip.w * 0.5f + 0.5f) * size.y);
+    };
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+    for (size_t i = 0; i < m_sceneObjects.size(); ++i) {
+        const SceneObject& obj = m_sceneObjects[i];
+        const Physics::Body body = physicsBodyOf(obj);
+        Physics::Shape shape;
+        Physics::Pose pose;
+        pose.position = obj.position;
+        pose.rotation = obj.quaternion;
+        pose.scale = obj.scale;
+        if (!Physics::shapeOfBody(body, pose, static_cast<int>(i), shape)) continue;
+
+        // Colors: the selected object is yellow, characters' capsules green, solid things orange, and things that
+        // don't block anyone (non-solid) a dim blue.
+        const bool selected = static_cast<int>(i) == m_selectedObjectIndex;
+        const bool blocks = body.character || body.solid;
+        ImU32 color = body.character ? IM_COL32(80, 220, 120, 230) : blocks ? IM_COL32(255, 160, 50, 230) : IM_COL32(110, 140, 200, 170);
+        if (selected) color = IM_COL32(255, 235, 90, 255);
+
+        for (const Segment& seg : Physics::shapeOutline(shape)) {
+            glm::vec3 a = glm::vec3(view * glm::vec4(seg.first, 1.0f));
+            glm::vec3 b = glm::vec3(view * glm::vec4(seg.second, 1.0f));
+            if (!clipSegmentToView(a, b)) continue;  // behind the viewing camera: can't be drawn
+            drawList->AddLine(toScreen(a), toScreen(b), color, selected ? 2.0f : 1.25f);
+        }
+    }
+    drawList->PopClipRect();
+}
+
+void Engine::stepPlayPhysics(float deltaTime) {
+    if (deltaTime <= 0.0f || m_playBodies.size() != m_sceneObjects.size()) return;
+
+    std::vector<Physics::Pose> poses = playPoses();
+    std::vector<size_t> moved;
+    Physics::stepBodies(m_playBodies, poses, deltaTime,
+                        [this](size_t body, const std::string& action) { return m_playMode->actionStartedThisStep(body, action); },
+                        &moved, &m_playContacts);
+
+    for (size_t i : moved) {
+        m_sceneObjects[i].position = poses[i].position;
+        m_playMode->setPosition(i, poses[i].position.x, poses[i].position.y, poses[i].position.z);  // its script carries on from here
+    }
+
+    // Tell the scripts who touched and who hit (`when Self touches ...`), now that everything is where it ended up.
+    for (const Physics::Contacts::Pair& p : m_playContacts.began) m_playMode->reportTouch(p.first, p.second, true);
+    for (const Physics::Contacts::Pair& p : m_playContacts.ended) m_playMode->reportTouch(p.first, p.second, false);
+    for (const Physics::Contacts::Pair& p : m_playContacts.hit) m_playMode->reportHit(p.first, p.second);
+}
+
+std::vector<Physics::Pose> Engine::playPoses() const {
+    std::vector<Physics::Pose> poses(m_sceneObjects.size());
+    for (size_t i = 0; i < m_sceneObjects.size(); ++i) {
+        const SceneObject& obj = m_sceneObjects[i];
+        poses[i].position = obj.position;
+        poses[i].rotation = obj.quaternion;
+        poses[i].scale = obj.scale;
+        poses[i].collisionEnabled = obj.collisionEnabled;
+    }
+    return poses;
+}
+
+void Engine::applyLookPitch() {
+    // Only objects a script just wrote the rotation of: for the others, "rotation" is still what the editor set.
+    for (SceneObject& obj : m_sceneObjects) {
+        CameraSettings cam;
+        if (obj.scriptFile.empty() || !cameraOf(obj, cam) || !cam.arm.enabled || !cam.arm.usePawnControlRotation) continue;
+        obj.lookPitch = obj.rotation.x;
+        obj.rotation.x = 0.0f;
+        obj.quaternion = glm::quat(glm::radians(obj.rotation));  // the body keeps its yaw (and roll), and stands upright
+    }
+}
+
+void Engine::updatePlayCamera(float deltaTime) {
+    CameraSettings cam;
+    const SceneObject* owner = playCameraOwner(cam);
+    if (!owner) return;  // nothing to look through: the viewport stays as it is
+
+    // The arm pulls the camera in at solid objects (not the Object that owns it), and may lag behind it.
+    const int ownerIndex = static_cast<int>(owner - m_sceneObjects.data());
+    ArmProbe probe;
+    std::vector<Physics::Pose> poses;
+    if (m_playBodies.size() == m_sceneObjects.size()) {
+        poses = playPoses();
+        probe = [&](const glm::vec3& from, const glm::vec3& to, float radius) {
+            return Physics::clearFraction(m_playBodies, poses, ownerIndex, from, to, radius);
+        };
+    }
+    const glm::mat4 world = playCameraMatrix(m_playArm, owner->position, owner->quaternion, cam, owner->lookPitch, deltaTime, probe);
+    m_camera->setView(glm::vec3(world[3]),
+                      glm::vec3(world * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f)),   // forward is +Y
+                      glm::vec3(world * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f)));  // up is +Z
+    m_camera->setProjection(verticalFovFromHorizontal(cam.fov, playAspect()), cam.nearClip, cam.farClip);
+}
+
+float Engine::playAspect() const {
+    return (m_viewportSize.x > 0.0f && m_viewportSize.y > 0.0f) ? m_viewportSize.x / m_viewportSize.y : 16.0f / 9.0f;
+}
+
+void Engine::drawCameraFrustum(const CameraSettings& cam, const glm::mat4& cameraToWorld, const glm::mat4& view,
+                               const glm::mat4& projection, ImVec2 pos, ImVec2 size) {
+    if (size.x <= 0.0f || size.y <= 0.0f) return;
+    const glm::mat4 cameraToView = view * cameraToWorld;
+    auto toScreen = [&](const glm::vec3& viewPoint) {
+        glm::vec4 clip = projection * glm::vec4(viewPoint, 1.0f);
+        return ImVec2(pos.x + (clip.x / clip.w * 0.5f + 0.5f) * size.x, pos.y + (clip.y / clip.w * 0.5f + 0.5f) * size.y);
+    };
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->PushClipRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), true);
+    for (const Segment& seg : frustumSegments(cam, playAspect())) {
+        glm::vec3 a = glm::vec3(cameraToView * glm::vec4(seg.first, 1.0f));
+        glm::vec3 b = glm::vec3(cameraToView * glm::vec4(seg.second, 1.0f));
+        if (!clipSegmentToView(a, b)) continue;  // behind the viewing camera: can't be drawn
+        drawList->AddLine(toScreen(a), toScreen(b), IM_COL32(90, 165, 255, 230), 1.5f);
+    }
+    drawList->PopClipRect();
 }
 
 void Engine::applyAssetDefaults(SceneObject& obj) const {
@@ -3595,24 +4149,52 @@ void Engine::setInstanceMaterial(SceneObject& obj, int itemIndex) {
     if (asset && !obj.overridesMaterial) applyAssetDefaults(obj);
 }
 
+void Engine::recordObjectEdit(int index, const SceneObject& before) {
+    if (index < 0 || index >= static_cast<int>(m_sceneObjects.size())) return;
+    if (Propulsion::recordObjectEdit(m_undoStack, m_redoStack, index, before, m_sceneObjects[index], m_selectedObjectIndex)) markProjectModified();
+}
+
+void Engine::duplicateObject(int index) {
+    if (m_isPlaying) {
+        OutputLog::warning(LogCategory::Editor, "Stop Play before duplicating objects.");
+        return;
+    }
+    if (index < 0 || index >= static_cast<int>(m_sceneObjects.size())) return;
+
+    const SceneObject source = m_sceneObjects[index];  // a copy: the list may grow below
+    const std::string name = copyNameFor(source.name, [this](const std::string& candidate) {
+        for (const SceneObject& other : m_sceneObjects) {
+            if (other.name == candidate) return true;
+        }
+        return false;
+    });
+    m_sceneObjects.push_back(copyOfSceneObject(source, name));
+    recordAddedObject(m_undoStack, m_redoStack, static_cast<int>(m_sceneObjects.size()) - 1, m_sceneObjects.back(), m_selectedObjectIndex);
+    m_selectedObjectIndex = static_cast<int>(m_sceneObjects.size()) - 1;
+    m_gizmoActive = false;
+
+    markProjectModified();
+    OutputLog::info(LogCategory::Editor, "Duplicated " + source.name + " as " + name);
+}
+
 void Engine::deleteObject(int index) {
     if (m_isPlaying) {
-        m_consoleBuffer.push_back("Stop Play before deleting objects.");
+        OutputLog::warning(LogCategory::Editor, "Stop Play before deleting objects.");
         return;
     }
     if (index < 0 || index >= static_cast<int>(m_sceneObjects.size())) return;
 
     std::string name = m_sceneObjects[index].name;
+    // Ctrl+Z brings it back, where it was in the scene. (The history refers to objects by position, and every change to the
+    // scene's list is a step in it, so the earlier steps are still right when they come round.)
+    recordRemovedObject(m_undoStack, m_redoStack, index, m_sceneObjects[index], m_selectedObjectIndex);
     m_sceneObjects.erase(m_sceneObjects.begin() + index);
 
-    // Selection, the gizmo, and undo all refer to objects by position, which just changed.
     m_selectedObjectIndex = -1;
     m_gizmoActive = false;
-    m_undoStack.clear();
-    m_redoStack.clear();
 
     markProjectModified();
-    m_consoleBuffer.push_back("Deleted object: " + name);
+    OutputLog::info(LogCategory::Editor, "Deleted object: " + name);
 }
 
-} // namespace Forge
+} // namespace Propulsion

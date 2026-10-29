@@ -1,4 +1,4 @@
-# Forge Engine - Architecture & Roadmap
+# Propulsion MK I - Architecture & Roadmap
 
 ## Current Features (v1.0.0 - Foundation)
 
@@ -59,8 +59,8 @@
 
 ### Phase 3: Visual Scripting Foundation
 
-#### Node-Based System (ForgeScript: see `ForgeScript/SPEC.md`)
-- [x] Visual scripting graph editor (the text of a `.forge` script is the source of truth; the graph and the text edit each other)
+#### Node-Based System (PropulsionScript: see `PropulsionScript/SPEC.md`)
+- [x] Visual scripting graph editor (the text of a `.prop` script is the source of truth; the graph and the text edit each other)
 - [x] Node creation and connection
 - [x] Basic node types:
   - Events (Start, Update, Overlap, Hit, Damaged, variable changed)
@@ -71,13 +71,13 @@
   - Flow with memory (Do Once, Do N, Gate, FlipFlop, Timeline)
 - [ ] The engine systems the nodes call: audio, UI, animation, physics (shapes, hit and overlap events), levels. Their calls are written to the console for now.
 
-The nodes taken from Unreal's list are in [NODELIST.md](NODELIST.md); `ForgeScript/SPEC.md` has a table of what each one is called in ForgeScript.
+The nodes taken from Unreal's list are in [NODELIST.md](NODELIST.md); `PropulsionScript/SPEC.md` has a table of what each one is called in PropulsionScript.
 
 #### Script Integration
 - [x] Blueprint/script component for game objects (scripts belong to Object assets)
 - [x] Variable inspector (the Variables panel; exposed variables)
-- [x] Script compilation to C++ (`forgec cpp`; tested against the interpreter, not yet packaged into a game)
-- [x] Hot-reload support (Play reads the `.forge` files each time, so there is no rebuild)
+- [x] Script compilation to C++ (`propc cpp`; tested against the interpreter, not yet packaged into a game)
+- [x] Hot-reload support (Play reads the `.prop` files each time, so there is no rebuild)
 
 ### Phase 4: Game Features
 
@@ -128,7 +128,7 @@ The nodes taken from Unreal's list are in [NODELIST.md](NODELIST.md); `ForgeScri
 ### Current Class Structure
 
 ```
-Forge::Engine (Main engine controller)
+Propulsion::Engine (Main engine controller)
 ├── Window (GLFW window management)
 ├── Camera (View and projection)
 ├── Shader (GLSL program management)
@@ -138,7 +138,7 @@ Forge::Engine (Main engine controller)
 ### Planned Expansion
 
 ```
-Forge::Engine
+Propulsion::Engine
 ├── Window
 ├── Renderer
 │   ├── RenderPipeline
@@ -195,7 +195,7 @@ Forge::Engine
 
 ## Visual Scripting Vision
 
-Forge Engine's visual scripting aims to be **even simpler** than Unreal's Blueprints:
+Propulsion MK I's visual scripting aims to be **even simpler** than Unreal's Blueprints:
 
 ### Key Principles
 1. **Minimal Nodes** - Only essential operations
@@ -262,20 +262,20 @@ Forge Engine's visual scripting aims to be **even simpler** than Unreal's Bluepr
 
 ## Comparison to Other Engines
 
-### Forge vs Unreal Engine
+### Propulsion vs Unreal Engine
 - **Lighter** - Smaller executable size
 - **Simpler** - Less complexity
 - **Faster** - Quick iteration times
 - **Focused** - Streamlined for specific use cases
 
-### Forge vs Unity
+### Propulsion vs Unity
 - **Visual Scripting** - More intuitive
 - **C++** - Better performance
 - **Integrated** - No external scripting engine
-- **Proprietary** - Full control over features
+- **In-house** - Full control over features
 
-### Forge vs Godot
-- **Proprietary** - Tailored for Forgeworks
+### Propulsion vs Godot
+- **Purpose-built** - Tailored for Forgeworks
 - **Specialized** - Optimized for company workflow
 - **Support** - Direct internal support
 
@@ -295,7 +295,7 @@ When adding features:
 - Prefer RAII and smart pointers
 - Keep classes focused and small
 - Use const correctness
-- Namespace everything under `Forge::`
+- Namespace everything under `Propulsion::`
 
 ## Resources for Developers
 
@@ -313,10 +313,9 @@ When adding features:
 
 ## License & Usage
 
-**Proprietary Software**  
-Copyright © 2025 Forgeworks Interactive Limited
+MIT License. Copyright © 2025 Forgeworks Interactive Limited.
 
-This engine is exclusively for use by Forgeworks employees and contractors in the development of company games.
+Provided for academic and educational purposes only; it is not a production-ready tool. See [LICENSE](../LICENSE) for the full terms.
 
 ---
 

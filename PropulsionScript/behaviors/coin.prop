@@ -1,0 +1,15 @@
+// coin.prop: spins, and when the player touches it, tells the world and disappears.
+
+header:
+	needs component:Transform
+	needs file:"player.prop" as Player when:used
+
+	event name:Collected
+
+implement:
+	every frame:
+		add 90 per second to Transform.Rot.Z
+
+	when Self touches Player as Visitor:
+		send Collected
+		destroy Self

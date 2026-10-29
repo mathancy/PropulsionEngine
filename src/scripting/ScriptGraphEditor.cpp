@@ -13,9 +13,9 @@
 
 #include "platform/FileDialogs.h"
 
-#include "forge_ffi.h"
+#include "propulsion_ffi.h"
 
-namespace Forge {
+namespace Propulsion {
 
 namespace fs = std::filesystem;
 
@@ -23,6 +23,7 @@ namespace {
 
 constexpr float kNodeWidth = 12.0f;
 constexpr float kValueNodeWidth = 10.0f;
+constexpr float kDuplicateOffset = 2.0f;  // how far down and to the right a copy is put from its original (grid units)
 
 ImU32 headerColorFor(const std::string& cls) {
     if (cls == "Event") return IM_COL32(190, 55, 55, 255);
@@ -34,7 +35,7 @@ ImU32 headerColorFor(const std::string& cls) {
 /// Run a library call that returns an owned string (or null) and an error string.
 std::string takeString(char* s) {
     std::string out = s ? s : "";
-    forge_string_free(s);
+    propulsion_string_free(s);
     return out;
 }
 
@@ -42,7 +43,7 @@ std::string takeString(char* s) {
 
 ScriptGraphEditor::ScriptGraphEditor(std::string absolutePath, Log log) : m_path(std::move(absolutePath)), m_log(std::move(log)) {
     // What can be added
-    std::string catalogText = takeString(forge_graph_catalog());
+    std::string catalogText = takeString(propulsion_graph_catalog());
     Json::Value catalog;
     std::string error;
     if (Json::parse(catalogText, catalog, error)) {
@@ -70,6 +71,11 @@ ScriptGraphEditor::ScriptGraphEditor(std::string absolutePath, Log log) : m_path
         for (const ScriptNode* n : nodes) keys.push_back(n->key);
         m_pending.push_back([this, keys]() { deleteNodes(keys); });
     };
+    hooks.onDuplicateNodes = [this](const std::vector<ScriptNode*>& nodes) {
+        std::vector<std::string> keys;
+        for (const ScriptNode* n : nodes) keys.push_back(n->key);
+        m_pending.push_back([this, keys]() { duplicateNodes(keys); });
+    };
     hooks.onNodesMoved = [this](const std::vector<ScriptNode*>& moved) {
         // A Get node is not in the script: it only remembers where it was put.
         bool inScript = false;
@@ -85,6 +91,16 @@ ScriptGraphEditor::ScriptGraphEditor(std::string absolutePath, Log log) : m_path
         if (inScript) m_pending.push_back([this]() { commitLayout(); });
     };
     hooks.onConnectGetter = [this](ScriptNode& getter, ScriptNode& to, int toPinId) { plugGetter(getter, to, toPinId); };
+    hooks.onConnectValue = [this](ScriptNode& value, ScriptNode& to, int toPinId) {
+        if (to.isData()) return;
+        const ScriptPinField* field = nullptr;
+        for (const ScriptPinField& f : to.fields) {
+            if (f.pinId == toPinId) field = &f;
+        }
+        if (!field || !field->wiredKey.empty() || field->kind == "choice" || field->kind == "flag") return;
+        const std::string valueKey = value.key, key = to.key, pin = field->name;
+        m_pending.push_back([this, valueKey, key, pin]() { edit("adopt_value", valueKey, key, pin); });
+    };
     hooks.onDropVariableOnPin = [this](ScriptNode& node, ScriptPinField& field, const std::string& variable) {
         const std::string key = node.key, pin = field.name;
         m_pending.push_back([this, key, pin, variable]() { edit("set_pin", key, pin, variable); });
@@ -127,6 +143,7 @@ ScriptGraphEditor::ScriptGraphEditor(std::string absolutePath, Log log) : m_path
         }
     };
     hooks.drawMenu = [this](const ScriptMenuContext& ctx) { drawMenu(ctx); };
+    hooks.searchResults = [this](const ScriptMenuContext& ctx) { return searchResults(ctx); };
     m_graph.setScriptHooks(std::move(hooks));
 
     reload();
@@ -144,7 +161,7 @@ void ScriptGraphEditor::refreshScripts() {
     for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
         if (++seen > 4000) break;
         std::error_code ignore;
-        if (!it->is_regular_file(ignore) || it->path().extension() != ".forge") continue;
+        if (!it->is_regular_file(ignore) || it->path().extension() != ".prop") continue;
         if (fs::equivalent(it->path(), self, ignore)) continue;
         m_scripts.push_back(fs::relative(it->path(), dir, ignore).generic_string());
     }
@@ -164,7 +181,7 @@ std::string ScriptGraphEditor::addReference(const std::string& kind, const std::
     std::string base = kind == "entity" ? "Entity" : "Entities";
     if (kind == "file") {
         if (file.empty()) return "";
-        // The script's file name, with a capital: coin.forge -> Coin
+        // The script's file name, with a capital: coin.prop -> Coin
         std::string stem = fs::path(file).stem().string();
         base = "Script";
         for (char& c : stem) {
@@ -204,7 +221,7 @@ std::string ScriptGraphEditor::addReference(const std::string& kind, const std::
 void ScriptGraphEditor::reload() {
     refreshScripts();
     char* error = nullptr;
-    char* json = forge_graph_load(m_path.c_str(), &error);
+    char* json = propulsion_graph_load(m_path.c_str(), &error);
     if (!json) {
         m_message = takeString(error);
         if (m_message.empty()) m_message = "The script could not be read.";
@@ -213,7 +230,7 @@ void ScriptGraphEditor::reload() {
         refreshCode(false);  // the code pane still shows what is on disk
         return;
     }
-    forge_string_free(error);
+    propulsion_string_free(error);
     m_message.clear();
     adopt(takeString(json));
 }
@@ -252,7 +269,7 @@ void ScriptGraphEditor::refreshCode(bool matchesModel) {
 
     if (text != m_codeApplied) {
         if (text != m_code.text()) {
-            if (m_codeDirty && m_log) m_log("[graph] Code typed in the pane was dropped: the script was changed some other way.");
+            if (m_codeDirty && m_log) m_log(LogCategory::ScriptGraph, LogLevel::Warning, "Code typed in the pane was dropped: the script was changed some other way.");
             m_code.setText(text);
         }
         m_codeApplied = text;
@@ -270,8 +287,8 @@ void ScriptGraphEditor::checkCode() {
     const std::string now = m_code.text();
     int line = 0, col = 0;
     char* message = nullptr;
-    if (forge_graph_check_source(now.c_str(), &line, &col, &message)) {
-        forge_string_free(message);
+    if (propulsion_graph_check_source(now.c_str(), &line, &col, &message)) {
+        propulsion_string_free(message);
         return;
     }
     m_codeHasError = true;
@@ -440,9 +457,8 @@ void ScriptGraphEditor::commitLayout() {
 
 void ScriptGraphEditor::resetLayout() {
     beginGroup();
-    std::error_code ec;
-    fs::remove(layoutFile(), ec);
-    reload();
+    // Only the script's nodes are arranged again: the ones that are not connected stay where they were put.
+    editRaw("reset_layout", "", "", "", "");
     m_needsFit = true;
     endGroup();
 }
@@ -453,7 +469,7 @@ void ScriptGraphEditor::addAt(const std::string& name, const std::string& parent
     const bool hadLayout = m_hasSavedLayout;
     int handlers = 0;
     for (const auto& entry : m_byKey) {
-        if (entry.second->isEvent()) handlers++;
+        if (entry.second->isEvent() && !entry.second->floating) handlers++;
     }
     bool isEvent = false;
     for (const CatalogEntry& e : m_catalog) {
@@ -466,6 +482,14 @@ void ScriptGraphEditor::addAt(const std::string& name, const std::string& parent
         }
         if (hadLayout || useSpawn) commitLayout();
     }
+    endGroup();
+}
+
+void ScriptGraphEditor::addFloating(const std::string& name, ImVec2 spawn) {
+    flushCode();
+    beginGroup();
+    const int x = static_cast<int>(std::lround(spawn.x)), y = static_cast<int>(std::lround(spawn.y));
+    editRaw("add_floating", name, std::to_string(x), std::to_string(y), "");
     endGroup();
 }
 
@@ -532,16 +556,49 @@ bool ScriptGraphEditor::deleteNodes(const std::vector<std::string>& allKeys) {
     return firstProblem.empty();
 }
 
+bool ScriptGraphEditor::duplicateNodes(const std::vector<std::string>& keys) {
+    flushCode();
+    // What each copy needs, read now: the graph is rebuilt after every edit, and the nodes with it.
+    struct Copy {
+        std::string key, variable;
+        ImVec2 at;
+    };
+    std::vector<Copy> copies;
+    for (const std::string& key : keys) {
+        const ScriptNode* n = nodeByKey(key);
+        if (!n) continue;
+        Copy c;
+        c.key = n->key;
+        // A Get node only carries a variable's name, so its copy is another Get node (which is not in the script either).
+        if (n->carriesVariable()) c.variable = n->name.substr(4);
+        c.at = ImVec2(std::round(n->position.x) + kDuplicateOffset, std::round(n->position.y) + kDuplicateOffset);
+        copies.push_back(c);
+    }
+
+    beginGroup();
+    std::string firstProblem;
+    for (const Copy& c : copies) {
+        if (!c.variable.empty()) {
+            addGetter(c.variable, c.at);
+        } else if (!editRaw("duplicate", c.key, std::to_string(static_cast<int>(c.at.x)), std::to_string(static_cast<int>(c.at.y)), "") && firstProblem.empty()) {
+            firstProblem = m_message;
+        }
+    }
+    endGroup();
+    m_message = firstProblem;
+    return firstProblem.empty();
+}
+
 bool ScriptGraphEditor::editRaw(const char* op, const std::string& a1, const std::string& a2, const std::string& a3, const std::string& a4) {
     char* error = nullptr;
-    char* json = forge_graph_edit(m_path.c_str(), op, a1.c_str(), a2.c_str(), a3.c_str(), a4.c_str(), &error);
+    char* json = propulsion_graph_edit(m_path.c_str(), op, a1.c_str(), a2.c_str(), a3.c_str(), a4.c_str(), &error);
     if (!json) {
         std::string why = takeString(error);
         m_message = "Not changed: " + (why.empty() ? std::string("that edit isn't possible") : why);
-        if (m_log) m_log("[graph] " + m_message);
+        if (m_log) m_log(LogCategory::ScriptGraph, LogLevel::Warning, m_message);
         return false;
     }
-    forge_string_free(error);
+    propulsion_string_free(error);
     m_message.clear();
     adopt(takeString(json));
     markDirty();
@@ -570,11 +627,11 @@ void ScriptGraphEditor::compile() {
     if (m_log) {
         const std::string name = fs::path(m_path).filename().string();
         if (m_compile.errors == 0) {
-            m_log("[compile] " + name + ": compiled" + (m_compile.warnings ? " with " + std::to_string(m_compile.warnings) + " warning(s)" : std::string()));
+            m_log(LogCategory::Compile, LogLevel::Info, name + ": compiled" + (m_compile.warnings ? " with " + std::to_string(m_compile.warnings) + " warning(s)" : std::string()));
         } else {
-            m_log("[compile] " + name + ": FAILED, " + std::to_string(m_compile.errors) + " error(s); Play will not start until they are fixed");
+            m_log(LogCategory::Compile, LogLevel::Error, name + ": FAILED, " + std::to_string(m_compile.errors) + " error(s); Play will not start until they are fixed");
         }
-        for (const Problem& p : m_compile.problems) m_log(std::string("  ") + (p.error ? "error: " : "warning: ") + p.message);
+        for (const Problem& p : m_compile.problems) m_log(LogCategory::Compile, p.error ? LogLevel::Error : LogLevel::Warning, name + ": " + p.message);
     }
 }
 
@@ -603,12 +660,12 @@ const std::vector<ScriptGraphEditor::Fit>& ScriptGraphEditor::fitsFor(const std:
     if (cached != m_fits.end()) return cached->second;
     std::vector<Fit>& fits = m_fits[variable];
     char* error = nullptr;
-    char* json = forge_graph_fits(m_path.c_str(), variable.c_str(), &error);
+    char* json = propulsion_graph_fits(m_path.c_str(), variable.c_str(), &error);
     if (!json) {
         takeString(error);
         return fits;
     }
-    forge_string_free(error);
+    propulsion_string_free(error);
     Json::Value list;
     std::string parseError;
     if (Json::parse(takeString(json), list, parseError)) {
@@ -626,7 +683,7 @@ void ScriptGraphEditor::addNodeFor(const ScriptNode& getter, const Fit& fit, ImV
     int handlers = 0, last = -1;
     for (const auto& entry : m_byKey) {
         const ScriptNode* n = entry.second;
-        if (!n->isEvent()) continue;
+        if (!n->isEvent() || n->floating) continue;
         handlers++;
         if (n->name != "Define Action" && n->key.size() > 1 && n->key[0] == 'h') last = (std::max)(last, std::atoi(n->key.c_str() + 1));
     }
@@ -642,7 +699,8 @@ void ScriptGraphEditor::addNodeFor(const ScriptNode& getter, const Fit& fit, ImV
     const ImVec2 at = getter.position;
     const int x = static_cast<int>(std::lround(at.x)), y = static_cast<int>(std::lround(at.y));
     // A pin given a phrase (a condition: `Alive is true`) gets a Compare node, which the Get node can't be wired into.
-    const bool computed = fit.text != getter.name.substr(4);
+    const std::string variable = getter.name.substr(4);
+    const bool computed = fit.text != variable && fit.text != variable + " is true";
     m_pending.push_back([this, host, index, handlers, fit, spawn, reused, getterKey, x, y, computed]() mutable {
         beginGroup();
         if (host.empty()) {
@@ -736,6 +794,17 @@ void ScriptGraphEditor::adopt(const std::string& json) {
         info.exposed = v["exposed"].boolean();
         m_vars.push_back(std::move(info));
     }
+    m_locals.clear();
+    for (size_t i = 0; i < m_model["locals"].size(); i++) {
+        const Json::Value& l = m_model["locals"].at(i);
+        LocalInfo info;
+        info.name = l["name"].str();
+        info.type = l["type"].str();
+        info.node = l["node"].str();
+        info.scope = l["scope"].str();
+        info.line = l["line"].integer();
+        m_locals.push_back(std::move(info));
+    }
     m_types.clear();
     for (size_t i = 0; i < m_model["types"].size(); i++) {
         const Json::Value& t = m_model["types"].at(i);
@@ -794,7 +863,7 @@ void ScriptGraphEditor::adopt(const std::string& json) {
     // undo back to before it was saved) the nodes are arranged automatically again.
     bool hasSaved = false;
     for (size_t i = 0; i < m_model["nodes"].size(); i++) {
-        if (!m_model["nodes"].at(i)["pos"].isNull()) hasSaved = true;
+        if (!m_model["nodes"].at(i)["pos"].isNull() && !m_model["nodes"].at(i)["floating"].boolean()) hasSaved = true;
     }
     const bool layoutThrownAway = m_hasSavedLayout && !hasSaved;
     m_hasSavedLayout = hasSaved;
@@ -812,7 +881,7 @@ static std::string signatureOf(const Json::Value& model) {
     const Json::Value& nodes = model["nodes"];
     for (size_t i = 0; i < nodes.size(); i++) {
         const Json::Value& n = nodes.at(i);
-        s += n["id"].str() + "|" + n["name"].str() + "|";
+        s += n["id"].str() + "|" + n["name"].str() + (n["floating"].boolean() ? "|f|" : "|");
         for (size_t k = 0; k < n["execs"].size(); k++) s += n["execs"].at(k)["label"].str() + ">" + n["execs"].at(k)["to"].str() + ",";
         s += "|";
         for (size_t k = 0; k < n["pins"].size(); k++) s += n["pins"].at(k)["name"].str() + (n["pins"].at(k)["wired"].isNull() ? "" : "~") + ",";
@@ -883,6 +952,7 @@ void ScriptGraphEditor::rebuild(const Json::Value& model) {
         node->headerColor = headerColorFor(node->nodeClass);
         if (node->category == "Variables") node->headerColor = IM_COL32(55, 145, 105, 255);  // a Get node
         node->canDelete = true;
+        node->floating = jn["floating"].boolean();
 
         node->hasExecIn = !node->isEvent() && !node->isData();
         if (node->hasExecIn) node->addInput("", PinType::Exec, m_graph.getNextPinId());
@@ -970,111 +1040,255 @@ void ScriptGraphEditor::rebuild(const Json::Value& model) {
     m_graph.selectNode(selected ? selected->id : -1);
 }
 
+// How automatic placement reads: left to right, then down, like a page.
+//  - A node that follows another sits to its right on the same line (its header in line with it), with kNodeGap grid squares between.
+//  - A block's body starts to the right of the block, and the node after the block goes to the right of everything the block holds.
+//  - A line holds kNodesPerRow nodes; the next one starts a new line at the left edge, kNodeGap below the lowest node of the graph.
+//  - A node put in the middle of a line bumps the rest of that line to the right to make room.
+//  - Value nodes sit below the line, in the column just left of the node they feed, kNodeGap below whatever is above them.
+namespace {
+constexpr float kNodeGap = 2.0f;
+constexpr int kNodesPerRow = 10;
+}  // namespace
+
 float ScriptGraphEditor::nodeHeight(const ScriptNode* n) const {
     return 1.5f + static_cast<float>((std::max)(n->inputs.size(), n->outputs.size()));
 }
 
-/// Lay out a run of statements from `first` downwards at (x, y). A block's body goes to the right of
-/// the block; the node after a block goes below everything the block holds. Returns the bottom.
-float ScriptGraphEditor::placeChain(const std::string& first, float x, float y) {
-    // Room on the left for value nodes, only if something in this run has them.
-    bool needsMargin = false;
-    for (std::string key = first; !key.empty();) {
-        ScriptNode* n = nodeByKey(key);
-        if (!n) break;
-        if (!m_feeders[key].empty()) needsMargin = true;
-        key = (!n->execLabels.empty() && n->execLabels.back() == "Next") ? n->execTargets.back() : std::string();
-    }
-    const float nodeX = x + (needsMargin ? kValueNodeWidth + 1.0f : 0.0f);
-
-    float cursor = y;
-    std::string key = first;
-    while (!key.empty()) {
-        ScriptNode* n = nodeByKey(key);
-        if (!n) break;
-        const float h = nodeHeight(n);
-
-        // Value nodes sit on the left, below the row the execution wire comes in on, so that wire
-        // runs clear above them.
-        float valueBottom = cursor + 2.0f;
-        for (const std::string& dk : m_feeders[key]) {
-            ScriptNode* d = nodeByKey(dk);
-            if (!d) continue;
-            d->position = ImVec2(x, valueBottom);
-            valueBottom += nodeHeight(d) + 0.5f;
-        }
-        n->position = ImVec2(nodeX, cursor);
-
-        const bool hasNext = !n->execLabels.empty() && n->execLabels.back() == "Next";
-        const size_t bodies = n->execLabels.size() - (hasNext ? 1 : 0);
-        float bodyY = cursor;
-        float bottom = (std::max)(cursor + h, m_feeders[key].empty() ? 0.0f : valueBottom - 0.5f);
-        for (size_t k = 0; k < bodies; k++) {
-            if (n->execTargets[k].empty()) continue;
-            bodyY = placeChain(n->execTargets[k], nodeX + n->size.x + 2.0f, bodyY) + 1.0f;
-        }
-        bottom = (std::max)(bottom, bodyY - 1.0f);
-
-        cursor = bottom + 1.0f;
-        key = hasNext ? n->execTargets.back() : std::string();
-    }
-    return cursor - 1.0f;
-}
-
 void ScriptGraphEditor::layout() {
-    float y = 0.0f;
     const Json::Value& nodes = m_model["nodes"];
-    for (size_t i = 0; i < nodes.size(); i++) {
-        if (nodes.at(i)["class"].str() != "Event") continue;
-        float bottom = placeChain(nodes.at(i)["id"].str(), 0.0f, y);
-        y = bottom + 3.0f;
-    }
 
-    // Positions that were saved (by dragging nodes, or placing one) win over the automatic ones.
-    std::map<std::string, ImVec2> automatic;
-    std::vector<ScriptNode*> placed, unplaced;
+    // A node that is not connected to the script is wherever it was put, and the script's own nodes are arranged
+    // without regard to it (it is not in the way of anything: the user placed it).
     for (size_t i = 0; i < nodes.size(); i++) {
+        if (!nodes.at(i)["floating"].boolean()) continue;
         ScriptNode* n = nodeByKey(nodes.at(i)["id"].str());
         if (!n) continue;
-        automatic[n->key] = n->position;
         const Json::Value& pos = nodes.at(i)["pos"];
-        if (!pos.isNull() && pos.size() == 2) {
-            n->position = ImVec2(static_cast<float>(pos.at(0).integer()), static_cast<float>(pos.at(1).integer()));
-            placed.push_back(n);
-        } else {
-            unplaced.push_back(n);
-        }
+        if (!pos.isNull() && pos.size() == 2) n->position = ImVec2(static_cast<float>(pos.at(0).integer()), static_cast<float>(pos.at(1).integer()));
     }
-    if (placed.empty()) return;
 
-    // A node with no saved position (just added, or its line was edited in a text editor) keeps its
-    // automatic place unless that is taken, and then moves down until it is clear.
-    auto overlaps = [&](const ScriptNode* a, const ScriptNode* b) {
-        return a->position.x < b->position.x + b->size.x && b->position.x < a->position.x + a->size.x &&
-               a->position.y < b->position.y + nodeHeight(b) && b->position.y < a->position.y + nodeHeight(a);
+    // Positions that were saved (by dragging nodes, or placing one) win; the rest are placed around them.
+    std::set<std::string> saved;
+    for (size_t i = 0; i < nodes.size(); i++) {
+        ScriptNode* n = nodeByKey(nodes.at(i)["id"].str());
+        if (!n || n->floating) continue;
+        const Json::Value& pos = nodes.at(i)["pos"];
+        if (pos.isNull() || pos.size() != 2) continue;
+        n->position = ImVec2(static_cast<float>(pos.at(0).integer()), static_cast<float>(pos.at(1).integer()));
+        saved.insert(n->key);
+    }
+
+    struct Placer {
+        ScriptGraphEditor& ed;
+        std::set<std::string> done, saved, fresh;  // placed (saved or not), saved by the user, and placed just now
+
+        static float right(const ScriptNode* n) { return n->position.x + n->size.x; }
+        float bottom(const ScriptNode* n) const { return n->position.y + ed.nodeHeight(n); }
+        static bool hasNext(const ScriptNode* n) { return !n->execLabels.empty() && n->execLabels.back() == "Next"; }
+        static size_t bodies(const ScriptNode* n) { return n->execLabels.size() - (hasNext(n) ? 1 : 0); }
+        bool placed(const ScriptNode* n) const { return done.count(n->key) != 0; }
+        ScriptNode* follower(const ScriptNode* n) const { return hasNext(n) ? ed.nodeByKey(n->execTargets.back()) : nullptr; }
+
+        std::vector<ScriptNode*> placedNodes() const {
+            std::vector<ScriptNode*> out;
+            for (const auto& entry : ed.m_byKey) {
+                if (!entry.second->floating && done.count(entry.first)) out.push_back(entry.second);
+            }
+            return out;
+        }
+        /// What is inside `n`: its bodies and their value nodes, and (if `own`) the value nodes feeding `n` itself.
+        std::vector<ScriptNode*> below(const ScriptNode* n, bool own) const {
+            const std::string prefix = n->key + ".", values = prefix + "v.";
+            std::vector<ScriptNode*> out;
+            for (ScriptNode* p : placedNodes()) {
+                if (p->key.compare(0, prefix.size(), prefix) != 0) continue;
+                if (!own && p->key.compare(0, values.size(), values) == 0) continue;
+                out.push_back(p);
+            }
+            return out;
+        }
+        bool anyStatement() const {
+            for (const ScriptNode* p : placedNodes()) {
+                if (!p->isData()) return true;
+            }
+            return false;
+        }
+        float leftEdge() const {
+            bool any = false;
+            float x = 0.0f;
+            for (const ScriptNode* p : placedNodes()) {
+                if (p->isData()) continue;
+                x = any ? (std::min)(x, p->position.x) : p->position.x;
+                any = true;
+            }
+            return x;
+        }
+        float lowest() const {
+            float y = 0.0f;
+            for (const ScriptNode* p : placedNodes()) y = (std::max)(y, bottom(p));
+            return y;
+        }
+        int onLine(float y) const {
+            int count = 0;
+            for (const ScriptNode* p : placedNodes()) count += (!p->isData() && std::fabs(p->position.y - y) < 0.5f) ? 1 : 0;
+            return count;
+        }
+        bool overlaps(const ScriptNode* a, float x, float y, const ScriptNode* b) const {
+            return x < right(b) && b->position.x < x + a->size.x && y < bottom(b) && b->position.y < y + ed.nodeHeight(a);
+        }
+
+        /// Where a statement goes: to the right of what comes before it, or on a new line.
+        void placeExec(ScriptNode* u, const ScriptNode* before, bool body, size_t bodyIndex) {
+            float x = 0.0f, y = 0.0f;
+            if (!before) {
+                x = leftEdge();
+                y = anyStatement() ? std::ceil(lowest() + kNodeGap) : 0.0f;
+            } else if (body) {
+                x = right(before) + kNodeGap;
+                y = before->position.y;
+                if (bodyIndex > 0) {
+                    float low = y;
+                    for (const ScriptNode* p : below(before, false)) low = (std::max)(low, bottom(p));
+                    if (low > y) y = std::ceil(low + kNodeGap);
+                }
+            } else {
+                x = right(before);
+                for (const ScriptNode* p : below(before, false)) {
+                    if (!p->isData()) x = (std::max)(x, right(p));
+                }
+                x += kNodeGap;
+                y = before->position.y;
+            }
+            // A full line goes on to the next one, unless the node is going between two that are already on this line.
+            const ScriptNode* next = follower(u);
+            const bool between = next && saved.count(next->key) && std::fabs(next->position.y - y) < 0.5f;
+            if (before && !between && onLine(y) >= kNodesPerRow) {
+                x = leftEdge();
+                y = std::ceil(lowest() + kNodeGap);
+            }
+            u->position = ImVec2(x, y);
+            done.insert(u->key);
+            fresh.insert(u->key);
+        }
+
+        /// The first free place for `d` at column `x`, going down from `y`: kNodeGap below whatever is in the way.
+        float freeBelow(const ScriptNode* d, float x, float y) const {
+            y = std::ceil(y);
+            const std::vector<ScriptNode*> others = placedNodes();
+            for (int guard = 0; guard < 500; guard++) {
+                const ScriptNode* hit = nullptr;
+                for (const ScriptNode* p : others) {
+                    if (p != d && overlaps(d, x, y, p)) {
+                        hit = p;
+                        break;
+                    }
+                }
+                if (!hit) break;
+                y = std::ceil(bottom(hit) + kNodeGap);
+            }
+            return y;
+        }
+
+        void placeFeeders(const ScriptNode* n, float fromY) {
+            auto it = ed.m_feeders.find(n->key);
+            if (it == ed.m_feeders.end()) return;
+            const std::vector<std::string> keys = it->second;
+            for (const std::string& dk : keys) {
+                ScriptNode* d = ed.nodeByKey(dk);
+                if (!d || d->floating || placed(d)) continue;
+                const float x = n->position.x - d->size.x - kNodeGap;
+                const float y = freeBelow(d, x, fromY);
+                d->position = ImVec2(x, y);
+                done.insert(d->key);
+                fresh.insert(d->key);
+                placeFeeders(d, y);
+            }
+        }
+
+        void moveWithItsContents(ScriptNode* n, float dx) {
+            for (ScriptNode* p : below(n, true)) p->position.x += dx;
+            n->position.x += dx;
+        }
+
+        /// The nodes after `from` on its line (and everything they hold) move right by `dx`.
+        void bump(ScriptNode* from, float dx) {
+            const float line = from->position.y;
+            for (ScriptNode* n = from; n && std::fabs(n->position.y - line) < 0.5f;) {
+                ScriptNode* after = follower(n);
+                moveWithItsContents(n, dx);
+                n = after;
+            }
+        }
+
+        /// Something new was put in or under `n`: the node after it, on the same line, makes room.
+        void keepFollowerClear(const ScriptNode* n) {
+            ScriptNode* next = follower(n);
+            if (!next || !saved.count(next->key)) return;
+            bool changed = fresh.count(n->key) != 0;
+            float needed = right(n);
+            for (const ScriptNode* p : below(n, false)) {
+                changed = changed || fresh.count(p->key) != 0;
+                if (!p->isData()) needed = (std::max)(needed, right(p));
+            }
+            needed += kNodeGap;
+            if (changed && std::fabs(next->position.y - n->position.y) < 0.5f && next->position.x < needed) bump(next, needed - next->position.x);
+        }
+
+        void process(ScriptNode* n, const ScriptNode* before, bool body, size_t bodyIndex) {
+            if (!placed(n)) placeExec(n, before, body, bodyIndex);
+            placeFeeders(n, n->position.y + 2.0f);
+            for (size_t k = 0; k < bodies(n); k++) {
+                if (!n->execTargets[k].empty()) chain(n->execTargets[k], n, true, k);
+            }
+            keepFollowerClear(n);
+        }
+
+        void chain(const std::string& first, ScriptNode* before, bool body, size_t bodyIndex) {
+            std::string key = first;
+            while (!key.empty()) {
+                ScriptNode* n = ed.nodeByKey(key);
+                if (!n) break;
+                process(n, before, body, bodyIndex);
+                before = n;
+                body = false;
+                key = hasNext(n) ? n->execTargets.back() : std::string();
+            }
+        }
     };
-    for (ScriptNode* u : unplaced) {
-        if (u->isData()) continue;
+
+    Placer placer{*this, {}, saved, {}};
+    placer.done = saved;
+    for (size_t i = 0; i < nodes.size(); i++) {
+        if (nodes.at(i)["class"].str() != "Event" || nodes.at(i)["floating"].boolean()) continue;
+        ScriptNode* handler = nodeByKey(nodes.at(i)["id"].str());
+        if (handler) placer.process(handler, nullptr, false, 0);
+    }
+
+    // Anything the walk above never reached goes under everything, at the left.
+    for (size_t i = 0; i < nodes.size(); i++) {
+        ScriptNode* n = nodeByKey(nodes.at(i)["id"].str());
+        if (!n || n->floating || placer.placed(n)) continue;
+        n->position = ImVec2(placer.leftEdge(), std::ceil(placer.lowest() + kNodeGap));
+        placer.done.insert(n->key);
+        placer.fresh.insert(n->key);
+    }
+
+    // A node just placed that landed on another (a script edited in a text editor, an old layout) moves down until it is clear.
+    for (const std::string& key : placer.fresh) {
+        ScriptNode* n = nodeByKey(key);
+        if (!n) continue;
         for (int attempt = 0; attempt < 400; attempt++) {
             bool taken = false;
-            for (const ScriptNode* p : placed) {
-                if (overlaps(u, p)) {
+            for (const ScriptNode* p : placer.placedNodes()) {
+                if (p != n && placer.overlaps(n, n->position.x, n->position.y, p)) {
                     taken = true;
                     break;
                 }
             }
             if (!taken) break;
-            u->position.y += 1.0f;
+            n->position.y += 1.0f;
         }
-        placed.push_back(u);
-    }
-    // A value node with no saved position stays where it was relative to the node it feeds.
-    for (ScriptNode* u : unplaced) {
-        if (!u->isData()) continue;
-        const ScriptNode* feeds = nodeByKey(u->feedsKey);
-        if (!feeds) continue;
-        const ImVec2 offset(automatic[u->key].x - automatic[feeds->key].x, automatic[u->key].y - automatic[feeds->key].y);
-        u->position = ImVec2(feeds->position.x + offset.x, feeds->position.y + offset.y);
     }
 }
 
@@ -1135,7 +1349,47 @@ void ScriptGraphEditor::statementMenu(const std::string& parent, int slot, int i
                 std::string name = e.name;
                 m_pending.push_back([this, name, parent, slot, index, useSpawn, spawn]() { addAt(name, parent, slot, index, useSpawn, spawn); });
             }
-            if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("%s", e.pattern.c_str());
+            if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("%s", e.pattern.c_str());
+        }
+        ImGui::EndMenu();
+    }
+}
+
+void ScriptGraphEditor::floatingMenu(ImVec2 spawn) {
+    std::vector<std::string> categories;
+    for (const CatalogEntry& e : m_catalog) {
+        if ((e.cls == "Action" || e.cls == "Flow") && std::find(categories.begin(), categories.end(), e.category) == categories.end()) {
+            categories.push_back(e.category);
+        }
+    }
+    for (const std::string& category : categories) {
+        if (!ImGui::BeginMenu(category.c_str())) continue;
+        for (const CatalogEntry& e : m_catalog) {
+            if ((e.cls != "Action" && e.cls != "Flow") || e.category != category) continue;
+            if (ImGui::MenuItem(e.name.c_str())) {
+                std::string name = e.name;
+                m_pending.push_back([this, name, spawn]() { addFloating(name, spawn); });
+            }
+            if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("%s", e.pattern.c_str());
+        }
+        ImGui::EndMenu();
+    }
+}
+
+void ScriptGraphEditor::floatingValueMenu(ImVec2 spawn) {
+    std::vector<std::string> categories;
+    for (const CatalogEntry& e : m_catalog) {
+        if (e.cls == "Data" && std::find(categories.begin(), categories.end(), e.category) == categories.end()) categories.push_back(e.category);
+    }
+    for (const std::string& category : categories) {
+        if (!ImGui::BeginMenu(category.c_str())) continue;
+        for (const CatalogEntry& e : m_catalog) {
+            if (e.cls != "Data" || e.category != category) continue;
+            if (ImGui::MenuItem(e.name.c_str())) {
+                std::string name = e.name;
+                m_pending.push_back([this, name, spawn]() { addFloating(name, spawn); });
+            }
+            if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("%s", e.pattern.c_str());
         }
         ImGui::EndMenu();
     }
@@ -1152,10 +1406,18 @@ void ScriptGraphEditor::drawMenu(const ScriptMenuContext& ctx) {
                     if (ImGui::MenuItem(e.name.c_str())) {
                         std::string name = e.name;
                         const ImVec2 spawn = ctx.spawn;
-                        m_pending.push_back([this, name, spawn]() { addAt(name, "", 0, 0, true, spawn); });
+                        m_pending.push_back([this, name, spawn]() { addFloating(name, spawn); });
                     }
-                    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("%s", e.pattern.c_str());
+                    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("%s", e.pattern.c_str());
                 }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Add Node")) {
+                floatingMenu(ctx.spawn);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Add Value")) {
+                floatingValueMenu(ctx.spawn);
                 ImGui::EndMenu();
             }
             ScriptNode* selected = nodeByKey(m_selectedKey);
@@ -1175,6 +1437,24 @@ void ScriptGraphEditor::drawMenu(const ScriptMenuContext& ctx) {
             if (!node) break;
             ImGui::TextDisabled("%s", node->name.c_str());
             ImGui::Separator();
+            {
+                // A node selected along with others is copied with them. The copies are connected to nothing.
+                const bool several = m_graph.selectedCount() > 1 && node->selected;
+                const std::string title = several ? "Duplicate " + std::to_string(m_graph.selectedCount()) + " selected nodes" : "Duplicate";
+                if (ImGui::MenuItem(title.c_str(), "Ctrl+D")) {
+                    std::vector<std::string> keys;
+                    if (several) {
+                        for (int id : m_graph.selectedNodeIds()) {
+                            if (const ScriptNode* sel = nodeById(id)) keys.push_back(sel->key);
+                        }
+                    } else {
+                        keys.push_back(node->key);
+                    }
+                    m_pending.push_back([this, keys]() { duplicateNodes(keys); });
+                }
+                if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Makes a copy with the same settings that is connected to nothing.");
+                ImGui::Separator();
+            }
             if (node->isGetter) {
                 if (ImGui::MenuItem("Remove")) {
                     const std::string key = node->key;
@@ -1194,25 +1474,21 @@ void ScriptGraphEditor::drawMenu(const ScriptMenuContext& ctx) {
                 ImGui::Separator();
             }
             if (node->isData()) {
-                if (ImGui::MenuItem("Remove (use a plain value instead)")) {
+                if (ImGui::MenuItem(node->floating ? "Delete" : "Remove (use a plain value instead)")) {
                     std::string key = node->key;
                     m_pending.push_back([this, key]() { edit("unplug", key); });
                 }
                 break;
             }
             if (node->name == "Branch") {
+                // True and False are always there; more conditions are added between them.
                 if (ImGui::MenuItem("Add Else If")) {
                     std::string key = node->key;
                     m_pending.push_back([this, key]() { edit("add_branch", key, "else_if"); });
                 }
-                if (ImGui::MenuItem("Add Otherwise")) {
-                    std::string key = node->key;
-                    m_pending.push_back([this, key]() { edit("add_branch", key, "otherwise"); });
-                }
                 for (size_t k = 0; k < node->execLabels.size(); k++) {
-                    const std::string& label = node->execLabels[k];
-                    if (label == "Else if" || label == "Otherwise") {
-                        if (ImGui::MenuItem(("Remove " + label + (label == "Else if" ? " " + std::to_string(k) : "")).c_str())) {
+                    if (node->execLabels[k] == "Else if") {
+                        if (ImGui::MenuItem(("Remove Else If " + std::to_string(k)).c_str())) {
                             std::string key = node->key;
                             int slot = static_cast<int>(k);
                             m_pending.push_back([this, key, slot]() { edit("remove_branch", key, std::to_string(slot)); });
@@ -1308,7 +1584,7 @@ void ScriptGraphEditor::drawMenu(const ScriptMenuContext& ctx) {
                             std::string name = e.name, key = node->key, pin = field->name;
                             m_pending.push_back([this, key, pin, name]() { edit("plug", key, pin, name); });
                         }
-                        if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("%s", e.pattern.c_str());
+                        if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("%s", e.pattern.c_str());
                     }
                     ImGui::EndMenu();
                 }
@@ -1350,7 +1626,7 @@ void ScriptGraphEditor::drawMenu(const ScriptMenuContext& ctx) {
                     while (end < fits.size() && fits[end].node == fits[i].node) end++;
                     if (end - i == 1) {
                         if (ImGui::MenuItem(fits[i].node.c_str())) addNodeFor(*node, fits[i], ctx.spawn);
-                        if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Into %s: %s", fits[i].pin.c_str(), fits[i].text.c_str());
+                        if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Into %s: %s", fits[i].pin.c_str(), fits[i].text.c_str());
                     } else if (ImGui::BeginMenu(fits[i].node.c_str())) {
                         for (size_t k = i; k < end; k++) {
                             if (ImGui::MenuItem(fits[k].pin.c_str())) addNodeFor(*node, fits[k], ctx.spawn);
@@ -1366,14 +1642,112 @@ void ScriptGraphEditor::drawMenu(const ScriptMenuContext& ctx) {
     }
 }
 
+std::vector<ScriptSearchResult> ScriptGraphEditor::searchResults(const ScriptMenuContext& ctx) {
+    std::vector<ScriptSearchResult> results;
+    ScriptNode* node = ctx.nodeId >= 0 ? nodeById(ctx.nodeId) : nullptr;
+    const ImVec2 spawn = ctx.spawn;
+
+    // The statements statementMenu offers, to go at parent/slot/index.
+    auto statements = [&](const std::string& parent, int slot, int index, bool useSpawn) {
+        for (const CatalogEntry& e : m_catalog) {
+            if (e.cls != "Action" && e.cls != "Flow") continue;
+            const std::string name = e.name;
+            results.push_back({name, e.category, e.pattern, e.pattern, [this, name, parent, slot, index, useSpawn, spawn]() {
+                                   m_pending.push_back([this, name, parent, slot, index, useSpawn, spawn]() { addAt(name, parent, slot, index, useSpawn, spawn); });
+                               }});
+        }
+    };
+
+    switch (ctx.kind) {
+        case ScriptMenuContext::Kind::Empty: {
+            for (const CatalogEntry& e : m_catalog) {
+                if (e.cls != "Event") continue;
+                const std::string name = e.name;
+                results.push_back({name, "Event", e.pattern, e.pattern, [this, name, spawn]() {
+                                       m_pending.push_back([this, name, spawn]() { addFloating(name, spawn); });
+                                   }});
+            }
+            for (const CatalogEntry& e : m_catalog) {
+                if (e.cls != "Action" && e.cls != "Flow" && e.cls != "Data") continue;
+                const std::string name = e.name;
+                results.push_back({name, e.category, e.pattern, e.pattern, [this, name, spawn]() {
+                                       m_pending.push_back([this, name, spawn]() { addFloating(name, spawn); });
+                                   }});
+            }
+            const ScriptNode* selected = nodeByKey(m_selectedKey);
+            if (selected && selected->hasExecIn) {
+                const size_t before = results.size();
+                statements(selected->parentKey, selected->slot, selected->index + 1, true);
+                for (size_t i = before; i < results.size(); i++) results[i].category = "after " + selected->name;
+            }
+            break;
+        }
+        case ScriptMenuContext::Kind::Pin: {
+            if (!node) break;
+            const ScriptPinField* field = nullptr;
+            for (const ScriptPinField& f : node->fields) {
+                if (f.pinId == ctx.pinId) field = &f;
+            }
+            if (!field || field->kind == "choice" || field->kind == "flag" || !field->wiredKey.empty()) break;
+            const std::string key = node->key, pin = field->name;
+            for (const VariableInfo& v : m_vars) {
+                if ((pin == "List") != v.isList()) continue;
+                const std::string name = v.name;
+                results.push_back({name + "  (" + v.type + ")", "Variable", "", "Use the variable " + name, [this, key, pin, name]() {
+                                       m_pending.push_back([this, key, pin, name]() { edit("set_pin", key, pin, name); });
+                                   }});
+            }
+            for (const CatalogEntry& e : m_catalog) {
+                if (e.cls != "Data") continue;
+                if (field->kind == "condition" && e.produces != "condition") continue;
+                const std::string name = e.name;
+                results.push_back({name, e.category, e.pattern, e.pattern, [this, key, pin, name]() {
+                                       m_pending.push_back([this, key, pin, name]() { edit("plug", key, pin, name); });
+                                   }});
+            }
+            break;
+        }
+        case ScriptMenuContext::Kind::ExecDrop: {
+            if (!node) break;
+            std::string parent;
+            int slot = 0, index = 0;
+            if (!execTarget(*node, ctx.pinId, parent, slot, index)) break;
+            statements(parent, slot, index, true);
+            break;
+        }
+        case ScriptMenuContext::Kind::GetterDrop: {
+            if (!node || !node->carriesVariable()) break;
+            const std::vector<Fit>& fits = fitsFor(node->name.substr(4));
+            const int getterId = node->id;
+            for (size_t i = 0; i < fits.size(); i++) {
+                // A node with several pins that take the variable is listed once for each, by the pin.
+                size_t same = 0;
+                for (const Fit& other : fits) same += other.node == fits[i].node ? 1 : 0;
+                const Fit fit = fits[i];
+                const std::string label = same > 1 ? fit.node + " (" + fit.pin + ")" : fit.node;
+                results.push_back({label, fit.category, "", "Into " + fit.pin + ": " + fit.text, [this, getterId, fit, spawn]() {
+                                       if (const ScriptNode* getter = nodeById(getterId)) addNodeFor(*getter, fit, spawn);
+                                   }});
+            }
+            break;
+        }
+        case ScriptMenuContext::Kind::Node:
+            break;  // the commands on a node are not nodes to find
+    }
+    return results;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------------------------
 
-void ScriptGraphEditor::setObject(const std::string& objectName, std::vector<ComponentInfo> components, int sharedBy) {
+void ScriptGraphEditor::setObject(const std::string& objectName, std::vector<ComponentInfo> components, int sharedBy,
+                                  std::function<void()> objectEditor, std::function<void()> addComponent) {
     m_objectName = objectName;
     m_components = std::move(components);
     m_sharedBy = sharedBy;
+    m_objectEditor = std::move(objectEditor);
+    m_addComponent = std::move(addComponent);
 }
 
 void ScriptGraphEditor::render() {
@@ -1405,7 +1779,7 @@ void ScriptGraphEditor::render() {
     if (ImGui::SmallButton("Reload")) reload();
     ImGui::SameLine();
     if (ImGui::SmallButton("Open as text")) {
-        if (!ForgeEngine::Platform::openWithDefaultApp(m_path) && m_log) m_log("Could not open " + m_path + ". Open it in any text editor.");
+        if (!PropulsionMKI::Platform::openWithDefaultApp(m_path) && m_log) m_log(LogCategory::ScriptGraph, LogLevel::Error, "Could not open " + m_path + ". Open it in any text editor.");
     }
     ImGui::SameLine();
     // The code pane's switch is lit while the pane is open.
@@ -1419,11 +1793,11 @@ void ScriptGraphEditor::render() {
         m_codeFocused = false;
     }
     m_codeButton = ImVec2((ImGui::GetItemRectMin().x + ImGui::GetItemRectMax().x) * 0.5f, (ImGui::GetItemRectMin().y + ImGui::GetItemRectMax().y) * 0.5f);
-    if (ImGui::IsItemHovered()) ForgeEngine::UI::tooltip("Show or hide the script's code beside the graph.\nClick a line to select its node; select a node to see its line.");
+    if (ImGui::IsItemHovered()) PropulsionMKI::UI::tooltip("Show or hide the script's code beside the graph.\nClick a line to select its node; select a node to see its line.");
     ImGui::SameLine();
     ImGui::TextDisabled("(?)");
     if (ImGui::IsItemHovered()) {
-        ForgeEngine::UI::tooltip("Right-click the canvas to add nodes.\nDrag a box on empty canvas to select several nodes; Delete removes them.\nDrag from a white arrow to reorder.\nRight-click a field > Use variable to attach a variable.\nCtrl+Z undoes, Ctrl+Y redoes.");
+        PropulsionMKI::UI::tooltip("Right-click the canvas to add nodes.\nIn any add menu (or after dragging a wire out), just start typing to search it; Up/Down and Enter pick.\nDrag a box on empty canvas to select several nodes; Delete removes them, Ctrl+D copies them (the copies are connected to nothing).\nDrag from a white arrow to reorder.\nRight-click a field > Use variable to attach a variable.\nCtrl+Z undoes, Ctrl+Y redoes.");
     }
 
     if (!m_message.empty()) {
@@ -1444,4 +1818,4 @@ void ScriptGraphEditor::render() {
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

@@ -12,7 +12,7 @@
 #include "nodegraph/NodeGraph.h"
 #include <cmath>
 
-namespace Forge {
+namespace Propulsion {
 
 void NodeGraph::duplicateSelectedNode(const ImVec2& canvasPos) {
     Node* selectedNode = getNode(m_selectedNodeId);
@@ -133,4 +133,4 @@ void NodeGraph::pasteNode(const ImVec2& canvasPos, const ImVec2& mousePos) {
     m_hasUnsavedChanges = true;
 }
 
-} // namespace Forge
+} // namespace Propulsion

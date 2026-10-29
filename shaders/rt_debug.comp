@@ -1,0 +1,52 @@
+#version 460
+#extension GL_GOOGLE_include_directive : enable
+#include "raytracing.glsl"
+
+// Phase 2's check that the ray tracing foundation works: one primary ray per pixel of the viewport image through the
+// acceleration structure, drawing what it hits. Mode 0: the smooth world normal as a colour. Mode 1: a colour per instance.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT scene;
+layout(set = 0, binding = 1, scalar) readonly buffer Instances { RtInstance instances[]; };
+layout(set = 0, binding = 2, rgba8) uniform writeonly image2D target;
+
+layout(push_constant) uniform Push {
+    mat4 inverseViewProjection;
+    vec4 cameraPosition;
+    uint mode;
+} push;
+
+vec3 instanceColor(uint index) {
+    // A hash into three well-spread channels
+    uint h = index * 2654435761u;
+    return vec3(float(h & 255u), float((h >> 8) & 255u), float((h >> 16) & 255u)) / 255.0 * 0.8 + 0.2;
+}
+
+void main() {
+    const ivec2 size = imageSize(target);
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    // The pixel's centre on the far plane, back to the world; the ray runs from the camera through it.
+    const vec2 ndc = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+    const vec4 farPoint = push.inverseViewProjection * vec4(ndc, 1.0, 1.0);
+    const vec3 origin = push.cameraPosition.xyz;
+    const vec3 direction = normalize(farPoint.xyz / farPoint.w - origin);
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.001, direction, 10000.0);
+    while (rayQueryProceedEXT(query)) {}
+
+    vec3 color = vec3(0.15);  // the raster pass's clear colour
+    if (rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionTriangleEXT) {
+        const uint index = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(query, true));
+        if (push.mode == 1u) {
+            color = instanceColor(index);
+        } else {
+            const uint primitive = uint(rayQueryGetIntersectionPrimitiveIndexEXT(query, true));
+            const vec2 hit = rayQueryGetIntersectionBarycentricsEXT(query, true);
+            color = rtWorldNormal(instances[index], primitive, hit) * 0.5 + 0.5;
+        }
+    }
+    imageStore(target, pixel, vec4(color, 1.0));
+}

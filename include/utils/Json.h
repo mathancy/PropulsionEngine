@@ -2,7 +2,7 @@
 
 /**
  * Json.h
- * A small JSON reader, enough for the data the ForgeScript library hands back (script graphs).
+ * A small JSON reader, enough for the data the PropulsionScript library hands back (script graphs).
  * Not a general-purpose library: no comments, no big-number precision, UTF-8 passed through.
  */
 
@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 namespace Json {
 
 struct Value {
@@ -188,4 +188,4 @@ inline bool parse(const std::string& text, Value& out, std::string& error) {
 }
 
 } // namespace Json
-} // namespace Forge
+} // namespace Propulsion

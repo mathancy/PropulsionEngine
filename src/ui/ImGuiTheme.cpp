@@ -1,4 +1,4 @@
-// ForgeEngine UI Theme Implementation
+// PropulsionMKI UI Theme Implementation
 // Provides theming functions for ImGui styling
 
 #include "ui/ImGuiTheme.h"
@@ -7,7 +7,7 @@
 #include <cstdarg>
 #include <algorithm>
 
-namespace ForgeEngine {
+namespace PropulsionMKI {
 namespace UI {
 
 namespace {
@@ -209,4 +209,4 @@ void pushPopupPadding() {
 }
 
 } // namespace UI
-} // namespace ForgeEngine
+} // namespace PropulsionMKI

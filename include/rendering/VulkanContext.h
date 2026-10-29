@@ -1,12 +1,14 @@
 #pragma once
 
+#include "rendering/RayTracingSupport.h"
+
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <string>
 #include <optional>
 
-namespace Forge {
+namespace Propulsion {
 
 struct QueueFamilyIndices {
     std::optional<uint32_t> graphicsFamily;
@@ -21,6 +23,16 @@ struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
+};
+
+/// The ray-tracing entry points, loaded from the device (the loader doesn't export extension functions). All null when
+/// the GPU can't do ray queries.
+struct RayTracingFunctions {
+    PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR = nullptr;
+    PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR = nullptr;
 };
 
 class VulkanContext {
@@ -55,6 +67,13 @@ public:
     const std::vector<VkImage>& getSwapChainImages() const { return m_swapChainImages; }
     const std::vector<VkImageView>& getSwapChainImageViews() const { return m_swapChainImageViews; }
     QueueFamilyIndices getQueueFamilies() const { return m_queueFamilies; }
+
+    // The GPU in use, and what it can do for ray tracing. The ray-tracing extensions and features are enabled whenever the GPU
+    // has them (set PROPULSION_DISABLE_RT=1 to start without them, and PROPULSION_GPU=<number or part of the name> to pick a GPU).
+    const std::string& getGpuName() const { return m_gpuName; }
+    const RayTracingCaps& getRayTracingCaps() const { return m_rtCaps; }
+    const RayTracingFunctions& getRayTracingFunctions() const { return m_rtFns; }
+    uint32_t getAccelerationStructureScratchAlignment() const { return m_asScratchAlignment; }
     
     // Offscreen rendering getters
     VkRenderPass getOffscreenRenderPass() const { return m_offscreenRenderPass; }
@@ -131,6 +150,10 @@ public:
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    /// A buffer with its own memory. With `deviceAddress` the buffer can be addressed from shaders (getBufferAddress).
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer,
+                      VkDeviceMemory& memory, bool deviceAddress = false);
+    VkDeviceAddress getBufferAddress(VkBuffer buffer) const;
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
     VkFormat findDepthFormat();
     
@@ -189,6 +212,9 @@ private:
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();
     bool isDeviceSuitable(VkPhysicalDevice device);
+    RayTracingCaps queryRayTracingCaps(VkPhysicalDevice device) const;
+    GpuCandidate describeGpu(VkPhysicalDevice device);
+    bool supportsBindlessTextures(VkPhysicalDevice device) const;  // the scene shader indexes one big array of textures
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
@@ -345,6 +371,11 @@ private:
     const std::vector<const char*> m_deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
+
+    std::string m_gpuName;
+    RayTracingCaps m_rtCaps;  // what was enabled on the device
+    RayTracingFunctions m_rtFns;
+    uint32_t m_asScratchAlignment = 256;
 };
 
-} // namespace Forge
+} // namespace Propulsion

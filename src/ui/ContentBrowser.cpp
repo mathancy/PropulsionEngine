@@ -2,6 +2,7 @@
 #include "ui/ImGuiTheme.h"
 #include "rendering/MeshLoader.h"
 #include "project/ObjectFile.h"
+#include "input/InputTypes.h"
 #include "utils/Utils.h"
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
@@ -18,20 +19,20 @@
 
 #include "platform/FileDialogs.h"
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::renderContentBrowser() {
     ImGui::Begin("Content Browser");
     
     // Split into hierarchy (left) and assets (right)
-    float hierarchyWidth = ForgeEngine::UI::scaled(150.0f);
+    float hierarchyWidth = PropulsionMKI::UI::scaled(150.0f);
     
     // Left side: Folder Hierarchy
     ImGui::BeginChild("Hierarchy", ImVec2(hierarchyWidth, 0), true);
     
     // Header with Folders title and refresh button (compact layout)
     float buttonSize = ImGui::GetFrameHeight() * 0.6f;
-    float padding = ForgeEngine::UI::scaled(5.0f);
+    float padding = PropulsionMKI::UI::scaled(5.0f);
 
     // Set initial cursor position for the row
     ImGui::SetCursorPosY(padding);
@@ -48,7 +49,7 @@ void Engine::renderContentBrowser() {
     ImGui::SetCursorPosY(padding); // Button at top with padding
     
     ImGui::PushFont(m_fontRegular); // Use regular font which has Font Awesome merged
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ForgeEngine::UI::scaled(2), ForgeEngine::UI::scaled(2))); // Smaller padding for tighter icon fit
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(PropulsionMKI::UI::scaled(2), PropulsionMKI::UI::scaled(2))); // Smaller padding for tighter icon fit
     ImGui::SetWindowFontScale(0.7f);
     if (ImGui::Button(ICON_FA_ROTATE, ImVec2(buttonSize, buttonSize))) {
         scanAssetsDirectory(true); // Rescan ALL folders to update tab names
@@ -59,7 +60,7 @@ void Engine::renderContentBrowser() {
     ImGui::PopFont();
     
     if (ImGui::IsItemHovered()) {
-        ForgeEngine::UI::tooltip("Refresh all assets");
+        PropulsionMKI::UI::tooltip("Refresh all assets");
     }
     
     // Move cursor down to just below button with padding
@@ -113,9 +114,9 @@ void Engine::renderContentBrowser() {
     ImGui::Separator();
     
     // Grid layout for content items
-    float cellSize = ForgeEngine::UI::scaled(100.0f);
-    float cellPadding = ForgeEngine::UI::scaled(20.0f);  // Increased padding to prevent cutoff
-    float borderSize = ForgeEngine::UI::scaled(2.0f);
+    float cellSize = PropulsionMKI::UI::scaled(100.0f);
+    float cellPadding = PropulsionMKI::UI::scaled(20.0f);  // Increased padding to prevent cutoff
+    float borderSize = PropulsionMKI::UI::scaled(2.0f);
     float panelWidth = ImGui::GetContentRegionAvail().x;
     int columnCount = std::max(1, static_cast<int>(panelWidth / (cellSize + cellPadding + borderSize * 4)));
     
@@ -154,8 +155,20 @@ void Engine::renderContentBrowser() {
             }
         }
         
+        // Input assets have no picture: say what they are on the button
+        if (item.type == "InputAction" || item.type == "InputMapping") {
+            const char* label = item.type == "InputAction" ? (item.inputAction.type == InputValueType::Axis ? "AXIS" : "BUTTON") : "KEYS";
+            const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax(), ts = ImGui::CalcTextSize(label);
+            ImGui::GetWindowDrawList()->AddText(ImVec2((mn.x + mx.x - ts.x) * 0.5f, (mn.y + mx.y - ts.y) * 0.5f), IM_COL32(230, 230, 230, 255), label);
+        }
+
+        // Double-click an HDRI to make it the scene's sky
+        if (item.type == "HDRI" && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            useHdriAsEnvironment(item);
+        }
+
         // Double-click to open asset editor tab
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        if (item.type != "HDRI" && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             // Check if tab already exists for this asset
             bool tabExists = false;
             for (size_t t = 0; t < m_tabs.size(); t++) {
@@ -185,6 +198,9 @@ void Engine::renderContentBrowser() {
         
         // Right-click context menu for asset
         if (ImGui::BeginPopupContextItem()) {
+            if (item.type == "HDRI" && ImGui::MenuItem("Use as Environment")) {
+                useHdriAsEnvironment(item);
+            }
             if (ImGui::MenuItem("Rename")) {
                 m_showRenamePopup = true;
                 m_renamingFolder = false;
@@ -243,7 +259,7 @@ void Engine::renderContentBrowser() {
         
         // Show tooltip with full name if truncated
         if (isTruncated && ImGui::IsItemHovered()) {
-            ForgeEngine::UI::tooltip("%s", item.name.c_str());
+            PropulsionMKI::UI::tooltip("%s", item.name.c_str());
         }
         
         // Object type - centered
@@ -268,8 +284,32 @@ void Engine::renderContentBrowser() {
         }
         if (ImGui::MenuItem("Create Object")) {
             m_showObjectNamePopup = true;
+            m_newObjectLightType = -1;
             memset(m_newObjectName, 0, sizeof(m_newObjectName));
             strcpy_s(m_newObjectName, sizeof(m_newObjectName), "NewObject");
+        }
+        if (ImGui::MenuItem("Create Directional Light")) {
+            m_showObjectNamePopup = true;
+            m_newObjectLightType = 0;
+            memset(m_newObjectName, 0, sizeof(m_newObjectName));
+            strcpy_s(m_newObjectName, sizeof(m_newObjectName), "Sun");
+        }
+        if (ImGui::MenuItem("Create Point Light")) {
+            m_showObjectNamePopup = true;
+            m_newObjectLightType = 1;
+            memset(m_newObjectName, 0, sizeof(m_newObjectName));
+            strcpy_s(m_newObjectName, sizeof(m_newObjectName), "PointLight");
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Create Input Action")) {
+            m_showInputActionNamePopup = true;
+            memset(m_newInputActionName, 0, sizeof(m_newInputActionName));
+            strcpy_s(m_newInputActionName, sizeof(m_newInputActionName), "newAction");
+        }
+        if (ImGui::MenuItem("Create Input Mapping")) {
+            m_showInputMappingNamePopup = true;
+            memset(m_newInputMappingName, 0, sizeof(m_newInputMappingName));
+            strcpy_s(m_newInputMappingName, sizeof(m_newInputMappingName), "NewInputMapping");
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Import File...")) {
@@ -281,7 +321,7 @@ void Engine::renderContentBrowser() {
     // Handle import file dialog (triggered from context menu)
     if (m_showImportDialog) {
         m_showImportDialog = false;
-        std::vector<std::string> importPaths = ForgeEngine::Platform::showImportFileDialog(m_window->getNativeWindow());
+        std::vector<std::string> importPaths = PropulsionMKI::Platform::showImportFileDialog(m_window->getNativeWindow());
         for (const auto& importPath : importPaths) {
             importFile(importPath);
         }
@@ -296,14 +336,14 @@ void Engine::renderContentBrowser() {
         ImGui::Text("Enter material name:");
         ImGui::InputText("##MaterialName", m_newMaterialName, sizeof(m_newMaterialName));
         
-        if (ImGui::Button("Create", ImVec2(ForgeEngine::UI::scaled(120), 0))) {
+        if (ImGui::Button("Create", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
             if (strlen(m_newMaterialName) > 0) {
                 createMaterial(m_newMaterialName);
                 m_showMaterialNamePopup = false;
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(ForgeEngine::UI::scaled(120), 0))) {
+        if (ImGui::Button("Cancel", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
             m_showMaterialNamePopup = false;
         }
         
@@ -319,20 +359,51 @@ void Engine::renderContentBrowser() {
         ImGui::Text("Enter object name:");
         ImGui::InputText("##ObjectName", m_newObjectName, sizeof(m_newObjectName));
         
-        if (ImGui::Button("Create", ImVec2(ForgeEngine::UI::scaled(120), 0))) {
+        if (ImGui::Button("Create", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
             if (strlen(m_newObjectName) > 0) {
-                createObject(m_newObjectName);
+                createObject(m_newObjectName, m_newObjectLightType);
                 m_showObjectNamePopup = false;
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(ForgeEngine::UI::scaled(120), 0))) {
+        if (ImGui::Button("Cancel", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
             m_showObjectNamePopup = false;
         }
         
         ImGui::EndPopup();
     }
     
+    // Input Action and Input Mapping name popups
+    if (m_showInputActionNamePopup) ImGui::OpenPopup("Create Input Action");
+    if (ImGui::BeginPopupModal("Create Input Action", &m_showInputActionNamePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter the action's name (scripts use it):");
+        ImGui::InputText("##InputActionName", m_newInputActionName, sizeof(m_newInputActionName));
+        ImGui::TextDisabled("Letters, digits and _, starting with a letter: jump, moveForward, fire_primary");
+        if (ImGui::Button("Create", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
+            if (strlen(m_newInputActionName) > 0) {
+                createInputAsset("InputAction", m_newInputActionName);
+                m_showInputActionNamePopup = false;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(PropulsionMKI::UI::scaled(120), 0))) m_showInputActionNamePopup = false;
+        ImGui::EndPopup();
+    }
+    if (m_showInputMappingNamePopup) ImGui::OpenPopup("Create Input Mapping");
+    if (ImGui::BeginPopupModal("Create Input Mapping", &m_showInputMappingNamePopup, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Enter mapping name:");
+        ImGui::InputText("##InputMappingName", m_newInputMappingName, sizeof(m_newInputMappingName));
+        if (ImGui::Button("Create", ImVec2(PropulsionMKI::UI::scaled(120), 0))) {
+            if (strlen(m_newInputMappingName) > 0) {
+                createInputAsset("InputMapping", m_newInputMappingName);
+                m_showInputMappingNamePopup = false;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(PropulsionMKI::UI::scaled(120), 0))) m_showInputMappingNamePopup = false;
+        ImGui::EndPopup();
+    }
+
     // Rename popup
     if (m_showRenamePopup) {
         ImGui::OpenPopup("Rename");
@@ -347,7 +418,7 @@ void Engine::renderContentBrowser() {
         
         ImGui::InputText("##RenameName", m_renameBuffer, sizeof(m_renameBuffer));
         
-        if (ImGui::Button("Rename", ImVec2(ForgeEngine::UI::scaled(120), 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        if (ImGui::Button("Rename", ImVec2(PropulsionMKI::UI::scaled(120), 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
             if (strlen(m_renameBuffer) > 0) {
                 if (m_renamingFolder && m_renamingFolderIndex >= 0 && m_renamingFolderIndex < static_cast<int>(m_folders.size())) {
                     // Rename folder
@@ -389,7 +460,6 @@ void Engine::renderContentBrowser() {
                             }
                         } catch (const std::exception& e) {
                             std::string error = "Failed to rename folder: " + std::string(e.what());
-                            std::cerr << error << std::endl;
                             CrashHandler::logError(error);
                         }
                     } else {
@@ -409,10 +479,16 @@ void Engine::renderContentBrowser() {
                     ContentItem& item = m_contentItems[m_renamingItemIndex];
                     std::string oldName = item.name;
                     std::string newName = m_renameBuffer;
+                    // An Input Action's name is what scripts call it, so it has to be a name they accept.
+                    if (item.type == "InputAction" && !isValidActionName(newName)) {
+                        const std::string fixed = actionNameFrom(newName);
+                        OutputLog::info(LogCategory::Content, "Input Action names are used in scripts, so \"" + newName + "\" became \"" + fixed + "\".");
+                        newName = fixed;
+                    }
                     
                     if (!m_currentProjectPath.empty() && !item.filepath.empty()) {
                         try {
-                            // Get the project directory (parent of the .fproj file)
+                            // Get the project directory (parent of the .pproj file)
                             std::filesystem::path projectFile(m_currentProjectPath);
                             std::filesystem::path projectDir = projectFile.parent_path();
                             
@@ -456,7 +532,7 @@ void Engine::renderContentBrowser() {
                                         file.write(reinterpret_cast<const char*>(&item.materialColor.g), sizeof(float));
                                         file.write(reinterpret_cast<const char*>(&item.materialColor.b), sizeof(float));
                                     } else if (item.type == "Object") {
-                                        ObjectFile::write(file, {item.id, item.meshReferenceGUID, item.materialReferenceGUID, item.scriptFile});
+                                        ObjectFile::write(file, ObjectFile::dataOf(item));
                                     }
                                     file.close();
                                     CrashHandler::logInfo("Created missing file before rename");
@@ -473,12 +549,18 @@ void Engine::renderContentBrowser() {
                             }
                             
                             // Update item properties
+                            if (item.type == "HDRI") {
+                                const std::string oldEnvironmentPath = "Assets/" + item.folder + "/" + oldRelativePath.filename().string();
+                                if (m_environment.hdriPath == oldEnvironmentPath) {
+                                    m_environment.hdriPath = "Assets/" + item.folder + "/" + newRelativePath.filename().string();
+                                    markProjectModified();
+                                }
+                            }
                             item.name = newName;
                             item.filepath = newRelativePath.string();
                             
                         } catch (const std::exception& e) {
                             std::string error = "Failed to rename asset file: " + std::string(e.what());
-                            std::cerr << error << std::endl;
                             CrashHandler::logError(error);
                         }
                     } else {
@@ -486,11 +568,25 @@ void Engine::renderContentBrowser() {
                         item.name = newName;
                     }
                     
+                    // A mesh's ID comes from its path, so renaming it gives it a new ID. Point everything that used the old
+                    // one (Objects, placed instances, open tabs) at the new one, so none of them lose their mesh.
+                    if (item.type == "Mesh") {
+                        const std::string newId = PropulsionMKI::Utils::meshAssetGUID(item.filepath, item.name);
+                        const std::string oldId = item.id;
+                        item.id = newId;
+                        retargetMeshReferences(oldId, newId);
+                    }
+
                     // Update any open tabs with this asset
                     for (auto& tab : m_tabs) {
                         if (tab.type == TabType::AssetEditor && tab.contentItemIndex == m_renamingItemIndex) {
-                            tab.name = newName;
+                            tab.name = item.name;
                         }
+                    }
+                    if (item.type == "InputAction") {
+                        item.inputAction.name = item.name;
+                        syncScriptInputs();  // scripts that used the old name no longer compile: say so
+                        if (oldName != item.name) OutputLog::info(LogCategory::Content, "Renamed Input Action " + oldName + " to " + item.name + ": scripts that use \"" + oldName + "\" need the new name.");
                     }
                 }
                 
@@ -501,7 +597,7 @@ void Engine::renderContentBrowser() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(ForgeEngine::UI::scaled(120), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        if (ImGui::Button("Cancel", ImVec2(PropulsionMKI::UI::scaled(120), 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             m_showRenamePopup = false;
             m_renamingItemIndex = -1;
             m_renamingFolderIndex = -1;
@@ -525,14 +621,14 @@ void Engine::createMaterial(const std::string& name) {
     // Save material file to disk (filesystem is source of truth)
     if (!m_currentProjectPath.empty()) {
         try {
-            std::string filepath = "Assets\\" + m_currentFolder + "\\" + name + ".fmat";
+            std::string filepath = "Assets\\" + m_currentFolder + "\\" + name + ".pmat";
             CrashHandler::logInfo("Creating material file: " + filepath);
             
             std::filesystem::path projectFile(m_currentProjectPath);
             std::filesystem::path projectDir = projectFile.parent_path();
             std::filesystem::path materialFile = projectDir / filepath;
             
-            std::cout << "Saving material to: " << materialFile.string() << std::endl;
+            OutputLog::print(LogCategory::Content, LogLevel::Info, "Saving material to: ", materialFile.string());
             
             // Create parent directories if they don't exist
             std::filesystem::create_directories(materialFile.parent_path());
@@ -580,7 +676,7 @@ void Engine::createMaterial(const std::string& name) {
                 matFile.write(reinterpret_cast<const char*>(&splitterRatio), sizeof(float));
                 
                 matFile.close();
-                std::cout << "Material file saved successfully" << std::endl;
+                OutputLog::print(LogCategory::Content, LogLevel::Info, "Material file saved successfully");
                 CrashHandler::logInfo("Material file saved successfully: " + materialFile.string());
                 
                 // Rescan ALL folders to pick up the new file and keep meshes available
@@ -602,34 +698,32 @@ void Engine::createMaterial(const std::string& name) {
                     m_activeTabIndex = static_cast<int>(m_tabs.size() - 1);
                 }
                 
-                m_consoleBuffer.push_back("Created material: " + name);
+                OutputLog::info(LogCategory::Content, "Created material: " + name);
             } else {
                 std::string error = "Failed to open material file for writing: " + materialFile.string();
-                std::cerr << "ERROR: " << error << std::endl;
                 CrashHandler::logError(error);
             }
         } catch (const std::exception& e) {
             std::string error = "Exception saving material file: " + std::string(e.what());
-            std::cerr << "ERROR: " << error << std::endl;
             CrashHandler::logError(error);
         }
     } else {
-        std::cout << "Cannot create material - project not saved yet" << std::endl;
+        OutputLog::print(LogCategory::Content, LogLevel::Warning, "Cannot create material - project not saved yet");
     }
 }
 
-void Engine::createObject(const std::string& name) {
+void Engine::createObject(const std::string& name, int lightType) {
     // Save object file to disk (filesystem is source of truth)
     if (!m_currentProjectPath.empty()) {
         try {
-            std::string filepath = "Assets\\" + m_currentFolder + "\\" + name + ".fobj";
+            std::string filepath = "Assets\\" + m_currentFolder + "\\" + name + ".pobj";
             CrashHandler::logInfo("Creating object file: " + filepath);
             
             std::filesystem::path projectFile(m_currentProjectPath);
             std::filesystem::path projectDir = projectFile.parent_path();
             std::filesystem::path objectFile = projectDir / filepath;
             
-            std::cout << "Saving object to: " << objectFile.string() << std::endl;
+            OutputLog::print(LogCategory::Content, LogLevel::Info, "Saving object to: ", objectFile.string());
             
             // Create parent directories if they don't exist
             std::filesystem::create_directories(objectFile.parent_path());
@@ -652,10 +746,16 @@ void Engine::createObject(const std::string& name) {
             std::ofstream objFile(objectFile, std::ios::binary);
             if (objFile.is_open()) {
                 // A new Object has a Cube mesh, no material, and no script (it just exists)
-                ObjectFile::write(objFile, {guid, defaultMeshGUID, defaultMaterialGUID, ""});
+                ObjectFile::Data data{guid, defaultMeshGUID, defaultMaterialGUID, ""};
+                if (lightType >= 0) {
+                    // A light is just a light: no mesh to draw (the editor shows its own picture of it)
+                    data.meshGUID.clear();
+                    data.light = lightType == 0 ? LightSettings::directional() : LightSettings::point();
+                }
+                ObjectFile::write(objFile, data);
 
                 objFile.close();
-                std::cout << "Object file saved successfully (v" << int(ObjectFile::kVersion) << " format)" << std::endl;
+                OutputLog::print(LogCategory::Content, LogLevel::Info, "Object file saved successfully (v", int(ObjectFile::kVersion), " format)");
                 CrashHandler::logInfo("Object file saved successfully: " + objectFile.string());
                 
                 // Rescan ALL folders to pick up the new file and keep meshes/materials available
@@ -677,19 +777,17 @@ void Engine::createObject(const std::string& name) {
                     m_activeTabIndex = static_cast<int>(m_tabs.size() - 1);
                 }
                 
-                m_consoleBuffer.push_back("Created object: " + name);
+                OutputLog::info(LogCategory::Content, "Created object: " + name);
             } else {
                 std::string error = "Failed to open object file for writing: " + objectFile.string();
-                std::cerr << "ERROR: " << error << std::endl;
                 CrashHandler::logError(error);
             }
         } catch (const std::exception& e) {
             std::string error = "Exception saving object file: " + std::string(e.what());
-            std::cerr << "ERROR: " << error << std::endl;
             CrashHandler::logError(error);
         }
     } else {
-        std::cout << "Cannot create object - project not saved yet" << std::endl;
+        OutputLog::print(LogCategory::Content, LogLevel::Warning, "Cannot create object - project not saved yet");
     }
 }
 
@@ -699,7 +797,11 @@ std::string Engine::getAssetTypeFromExtension(const std::string& extension) {
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     
     // Image files
-    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga" || ext == ".hdr") {
+    // HDRI panoramas (the sky)
+    if (ext == ".hdr") {
+        return "HDRI";
+    }
+    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga") {
         return "Texture";
     }
     // 3D model files  
@@ -742,7 +844,7 @@ VkDescriptorSet Engine::generateTextureThumbnail(const std::string& filepath) {
 void Engine::importFile(const std::string& filepath) {
     if (m_currentProjectPath.empty()) {
         CrashHandler::logWarning("Cannot import file - no project open");
-        m_consoleBuffer.push_back("ERROR: Cannot import file - please save the project first");
+        OutputLog::error(LogCategory::Content, "Cannot import file - please save the project first");
         return;
     }
     
@@ -754,7 +856,7 @@ void Engine::importFile(const std::string& filepath) {
         
         if (assetType == "Unknown") {
             CrashHandler::logWarning("Unsupported file type: " + extension);
-            m_consoleBuffer.push_back("ERROR: Unsupported file type: " + extension);
+            OutputLog::error(LogCategory::Content, "Unsupported file type: " + extension);
             return;
         }
         
@@ -769,6 +871,9 @@ void Engine::importFile(const std::string& filepath) {
             else targetFolder = "Assets";
         }
         
+        // HDRIs (the sky) live in their own folder
+        if (assetType == "HDRI") targetFolder = "HDRI";
+
         // Calculate destination path
         std::filesystem::path projectFile(m_currentProjectPath);
         std::filesystem::path projectDir = projectFile.parent_path();
@@ -797,13 +902,13 @@ void Engine::importFile(const std::string& filepath) {
         // Create ContentItem for the imported file
         std::string relativePath = "Assets/" + targetFolder + "/" + destPath.filename().string();
         ContentItem newItem(filename, assetType, targetFolder, relativePath);
-        newItem.id = generateGUID();
+        if (assetType != "Mesh") newItem.id = generateGUID();  // a mesh's ID comes from its path, so it is the same after a reload
         
         // Store full path for texture loading
         newItem.filepath = destPath.string();
         
         // Generate appropriate thumbnail based on type
-        if (assetType == "Texture") {
+        if (assetType == "Texture" || assetType == "HDRI") {
             newItem.thumbnailTexture = generateTextureThumbnail(destPath.string());
         } else if (assetType == "Mesh") {
             // Load mesh and generate thumbnail using MeshLoader
@@ -844,14 +949,14 @@ void Engine::importFile(const std::string& filepath) {
             }
         }
         
-        m_consoleBuffer.push_back("Imported: " + filename + " (" + assetType + ")");
+        OutputLog::info(LogCategory::Content, "Imported: " + filename + " (" + assetType + ")");
         CrashHandler::logInfo("Successfully imported " + assetType + ": " + filename);
         
     } catch (const std::exception& e) {
         std::string error = "Failed to import file: " + std::string(e.what());
         CrashHandler::logError(error);
-        m_consoleBuffer.push_back("ERROR: " + error);
+        OutputLog::error(LogCategory::Content, error);
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

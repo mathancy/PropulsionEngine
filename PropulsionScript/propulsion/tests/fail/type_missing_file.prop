@@ -1,0 +1,7 @@
+// expect: there is no file at
+header:
+	needs file:"nowhere.prop" as Nowhere
+
+implement:
+	every frame:
+		finish

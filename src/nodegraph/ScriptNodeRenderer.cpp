@@ -1,7 +1,7 @@
 /**
  * ScriptNodeRenderer.cpp
  *
- * Draws the pins and the input fields of script nodes (nodes made from one sentence of a ForgeScript
+ * Draws the pins and the input fields of script nodes (nodes made from one sentence of a PropulsionScript
  * file). Layout matches the generic node layout, so hit testing and wires work unchanged:
  *   - one row per pin, inputs on the left and outputs on the right;
  *   - an execution pin is a triangle, a value pin a circle;
@@ -18,7 +18,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace Forge {
+namespace Propulsion {
 
 namespace {
 
@@ -137,8 +137,12 @@ bool NodeGraph::renderSingleScriptNodeWidgets(ScriptNode* node, const ImVec2& ca
         ImVec2 hMin = nodePos, hMax = ImVec2(nodeEnd.x, nodePos.y + grid);
         if (ImGui::IsMouseHoveringRect(hMin, hMax) && !ImGui::IsPopupOpen("NodeGraphContextMenu") && !m_isDraggingNode) {
             std::string tip = node->error.empty() ? node->comment : ("Problem: " + node->error);
+            if (node->floating) {
+                if (!tip.empty()) tip += "\n\n";
+                tip += "Not connected to the script yet, so it makes no code.\nWire it into an event's flow to add it.";
+            }
             if (!tip.empty()) {
-                ForgeEngine::UI::tooltip("%s", tip.c_str());
+                PropulsionMKI::UI::tooltip("%s", tip.c_str());
             }
         }
     }
@@ -216,7 +220,7 @@ bool NodeGraph::renderSingleScriptNodeWidgets(ScriptNode* node, const ImVec2& ca
             }
             if (unplugged) ImGui::PopStyleColor(2);
             if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("FORGE_VARIABLE")) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PROPULSION_VARIABLE")) {
                     if (m_scriptHooks.onDropVariableOnPin) m_scriptHooks.onDropVariableOnPin(*node, f, std::string(static_cast<const char*>(payload->Data)));
                 }
                 ImGui::EndDragDropTarget();
@@ -252,7 +256,7 @@ bool NodeGraph::renderSingleScriptNodeWidgets(ScriptNode* node, const ImVec2& ca
             if (unplugged) ImGui::PopStyleColor();
             // A variable dragged from the Variables panel can be dropped on the field.
             if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("FORGE_VARIABLE")) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PROPULSION_VARIABLE")) {
                     if (m_scriptHooks.onDropVariableOnPin) m_scriptHooks.onDropVariableOnPin(*node, f, std::string(static_cast<const char*>(payload->Data)));
                 }
                 ImGui::EndDragDropTarget();
@@ -278,4 +282,4 @@ bool NodeGraph::renderSingleScriptNodeWidgets(ScriptNode* node, const ImVec2& ca
     return anyActive;
 }
 
-} // namespace Forge
+} // namespace Propulsion

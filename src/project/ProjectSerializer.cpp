@@ -8,7 +8,7 @@
 #include <iostream>
 #include <filesystem>
 
-namespace Forge {
+namespace Propulsion {
 
 // Helper write functions
 void ProjectSerializer::writeVec3(std::ofstream& file, const glm::vec3& vec) {
@@ -101,9 +101,9 @@ time_t ProjectSerializer::readTime(std::ifstream& file) {
 }
 
 bool ProjectSerializer::saveProject(const std::string& filepath, const ProjectData& data) {
-    // filepath is the full path to the .fproj file (e.g., C:\Projects\MyProject\MyProject.fproj)
-    std::filesystem::path forgeFile(filepath);
-    std::filesystem::path projectDir = forgeFile.parent_path();
+    // filepath is the full path to the .pproj file (e.g., C:\Projects\MyProject\MyProject.pproj)
+    std::filesystem::path propulsionFile(filepath);
+    std::filesystem::path projectDir = propulsionFile.parent_path();
     std::string projectName = projectDir.filename().string();
     
     // Create project directory and subdirectories
@@ -114,6 +114,7 @@ bool ProjectSerializer::saveProject(const std::string& filepath, const ProjectDa
         std::filesystem::create_directories(projectDir / "Assets" / "Textures");
         std::filesystem::create_directories(projectDir / "Assets" / "Materials");
         std::filesystem::create_directories(projectDir / "Assets" / "Objects");
+        std::filesystem::create_directories(projectDir / "Assets" / "Input");
         
         // Copy default mesh files to Assets/Meshes
         std::filesystem::path sourceMeshDir = "resources/default_meshes";
@@ -129,23 +130,26 @@ bool ProjectSerializer::saveProject(const std::string& filepath, const ProjectDa
             }
         }
     } catch (const std::filesystem::filesystem_error& e) {
-        std::cerr << "Failed to create project directories: " << e.what() << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Failed to create project directories: ", e.what());
         return false;
     }
     
-    // Save the .fproj file
-    std::ofstream file(forgeFile, std::ios::binary);
+    // Save the .pproj file
+    std::ofstream file(propulsionFile, std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Failed to open file for writing: " << forgeFile << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Failed to open file for writing: ", propulsionFile);
         return false;
     }
     
     // Write file header and version
-    const char* header = "FORGE";
+    const char* header = "PROPU";
     file.write(header, 5);
     // Version 2 adds each scene object's mesh and material GUIDs, version 3 whether each is overridden
-    // on the instance (otherwise it follows its Object asset). Older files still load.
-    int version = 3;
+    // on the instance (otherwise it follows its Object asset), version 4 which asset each asset-editor tab is
+    // showing (its GUID), so reopening a project shows the same assets and never opens one twice, version 5 the scene's
+    // environment (its HDRI, intensity, rotation and whether the sky is drawn), version 6 its shadow and ambient occlusion
+    // settings, version 7 how the viewport is drawn (Raster, Hybrid RT or Path Tracer, and the rays they spend). Older files still load.
+    int version = 7;
     writeInt(file, version);
     
     // Write window state
@@ -196,16 +200,35 @@ bool ProjectSerializer::saveProject(const std::string& filepath, const ProjectDa
         writeFloat(file, tab.cameraYaw);
         writeFloat(file, tab.cameraPitch);
         writeBool(file, tab.hasUnsavedChanges);
+        writeString(file, tab.assetId);
     }
     writeInt(file, data.activeTabIndex);
     
     // Write UI state
     writeBool(file, data.showObjectsPanel);
     writeBool(file, data.showContentBrowser);
+
+    // Write the environment (version 5)
+    writeString(file, data.environment.hdriPath);
+    writeFloat(file, data.environment.intensity);
+    writeFloat(file, data.environment.rotationDegrees);
+    writeBool(file, data.environment.showBackground);
+
+    // Write the shadow and ambient occlusion settings (version 6)
+    writeBool(file, data.environment.shadows);
+    writeFloat(file, data.environment.shadowDistance);
+    writeBool(file, data.environment.ambientOcclusion);
+    writeFloat(file, data.environment.aoRadius);
+    writeFloat(file, data.environment.aoStrength);
+
+    // Write how the viewport is drawn (version 7)
+    writeInt(file, static_cast<int>(data.environment.renderMode));
+    writeInt(file, data.environment.rtShadowRays);
+    writeInt(file, data.environment.rtAoRays);
     
     file.close();
-    std::cout << "Project saved successfully to: " << projectDir << std::endl;
-    std::cout << "Project file: " << forgeFile << std::endl;
+    OutputLog::print(LogCategory::Project, LogLevel::Info, "Project saved successfully to: ", projectDir);
+    OutputLog::print(LogCategory::Project, LogLevel::Info, "Project file: ", propulsionFile);
     return true;
 }
 
@@ -213,7 +236,7 @@ bool ProjectSerializer::loadProject(const std::string& filepath, ProjectData& da
     try {
         return loadProjectFile(filepath, data);
     } catch (const std::exception& e) {
-        std::cerr << "Failed to load project: " << e.what() << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Failed to load project: ", e.what());
         return false;
     }
 }
@@ -221,21 +244,21 @@ bool ProjectSerializer::loadProject(const std::string& filepath, ProjectData& da
 bool ProjectSerializer::loadProjectFile(const std::string& filepath, ProjectData& data) {
     std::ifstream file(filepath, std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Failed to open file for reading: " << filepath << std::endl;
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Failed to open file for reading: ", filepath);
         return false;
     }
     
     // Read and verify header
     char header[6] = {0};
     file.read(header, 5);
-    if (std::string(header) != "FORGE") {
-        std::cerr << "Invalid project file format" << std::endl;
+    if (std::string(header) != "PROPU" && std::string(header) != "FORGE") {  // "FORGE" is what files from before the rename start with
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Invalid project file format");
         return false;
     }
     
     int version = readInt(file);
-    if (version < 1 || version > 3) {
-        std::cerr << "Unsupported project file version: " << version << std::endl;
+    if (version < 1 || version > 7) {
+        OutputLog::print(LogCategory::Project, LogLevel::Error, "Unsupported project file version: ", version);
         return false;
     }
     data.fileVersion = version;
@@ -305,6 +328,7 @@ bool ProjectSerializer::loadProjectFile(const std::string& filepath, ProjectData
         tab.cameraPitch = readFloat(file);
         readBool(file); // Read hasUnsavedChanges but ignore it - always start as saved
         tab.hasUnsavedChanges = false; // Force to false on load
+        if (version >= 4) tab.assetId = readString(file);  // older files didn't say which asset a tab showed
         tab.needsSelection = false; // Don't auto-select on load
         data.tabs.push_back(tab);
     }
@@ -313,10 +337,35 @@ bool ProjectSerializer::loadProjectFile(const std::string& filepath, ProjectData
     // Read UI state
     data.showObjectsPanel = readBool(file);
     data.showContentBrowser = readBool(file);
+
+    // Read the environment: a file from before version 5 has the default sky
+    data.environment = EnvironmentSettings();
+    if (version >= 5) {
+        data.environment.hdriPath = readString(file);
+        data.environment.intensity = readFloat(file);
+        data.environment.rotationDegrees = readFloat(file);
+        data.environment.showBackground = readBool(file);
+        if (!file) throw std::runtime_error("the project file ends in the middle of its environment settings");
+    }
+    if (version >= 6) {
+        data.environment.shadows = readBool(file);
+        data.environment.shadowDistance = readFloat(file);
+        data.environment.ambientOcclusion = readBool(file);
+        data.environment.aoRadius = readFloat(file);
+        data.environment.aoStrength = readFloat(file);
+        if (!file) throw std::runtime_error("the project file ends in the middle of its render settings");
+    }
+    if (version >= 7) {
+        data.environment.renderMode = renderModeFromInt(readInt(file));
+        data.environment.rtShadowRays = readInt(file);
+        data.environment.rtAoRays = readInt(file);
+        if (!file) throw std::runtime_error("the project file ends in the middle of its ray tracing settings");
+    }
+    data.environment.sanitize();  // a damaged value shouldn't turn the whole scene black or blow it out
     
     file.close();
-    std::cout << "Project loaded successfully from: " << filepath << std::endl;
+    OutputLog::print(LogCategory::Project, LogLevel::Info, "Project loaded successfully from: ", filepath);
     return true;
 }
 
-} // namespace Forge
+} // namespace Propulsion

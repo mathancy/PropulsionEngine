@@ -8,7 +8,7 @@
 #include <string>
 #include <glm/glm.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 // Pin data types for visual distinction
 enum class PinType {
@@ -134,4 +134,4 @@ struct TextureInfo {
         : name(n), filepath(fp), thumbnail(thumb) {}
 };
 
-} // namespace Forge
+} // namespace Propulsion

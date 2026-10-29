@@ -2,18 +2,22 @@
 
 /**
  * ScriptGraphEditor.h
- * Shows a ForgeScript (.forge) file as a node graph, and edits the file through it.
+ * Shows a PropulsionScript (.prop) file as a node graph, and edits the file through it.
  *
- * The text file is always the source of truth. The graph is built from it (by the ForgeScript
- * library, through forge_graph_load), every edit made in the graph is sent back to the library as an
- * operation (forge_graph_edit), which rewrites the file only if the result is still a valid script,
+ * The text file is always the source of truth. The graph is built from it (by the PropulsionScript
+ * library, through propulsion_graph_load), every edit made in the graph is sent back to the library as an
+ * operation (propulsion_graph_edit), which rewrites the file only if the result is still a valid script,
  * and then the graph is rebuilt from the file. So a refused edit never leaves the graph and the text
  * disagreeing, and editing the file in a text editor updates the graph too.
+ *
+ * The one thing the text does not hold is a node that is not connected to anything yet (a floating node, see
+ * addFloating): it is kept in the layout file beside the script, and joins the script when it is wired in.
  *
  * It draws with the same NodeGraph canvas the material editor uses.
  */
 
 #include "nodegraph/NodeGraph.h"
+#include "core/OutputLog.h"
 #include "scripting/CodeBuffer.h"
 #include "utils/Json.h"
 
@@ -23,11 +27,11 @@
 #include <string>
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 
 class ScriptGraphEditor {
 public:
-    using Log = std::function<void(const std::string&)>;
+    using Log = LogFn;
 
     ScriptGraphEditor(std::string absolutePath, Log log);
 
@@ -42,7 +46,7 @@ public:
     /// The last reason an edit or a load was refused (empty if all is well).
     const std::string& message() const { return m_message; }
 
-    /// Make one edit to the script, the way a gesture in the graph does (see forge_graph_edit for
+    /// Make one edit to the script, the way a gesture in the graph does (see propulsion_graph_edit for
     /// the operations). Returns false, with `message()` set, if the script would no longer be valid.
     /// Every edit that changes the script or the layout is one undo step.
     bool edit(const char* op, const std::string& a1 = "", const std::string& a2 = "", const std::string& a3 = "", const std::string& a4 = "");
@@ -50,6 +54,12 @@ public:
     /// Delete several nodes (by key) as one undo step. Nodes inside a deleted node go with it; a value
     /// node is replaced by a plain value. Returns false, with `message()` set, if any was refused.
     bool deleteNodes(const std::vector<std::string>& keys);
+
+    /// Copy several nodes (by key) as one undo step. A copy is connected to nothing: nothing runs before, after or
+    /// inside it, and a computed value that was plugged into one of its pins is a plain value. It keeps the node's
+    /// own settings and is a little below and to the right of the original. Like any node that is not wired in, it is
+    /// not part of the script's text. Returns false, with `message()` set, if any was refused.
+    bool duplicateNodes(const std::vector<std::string>& keys);
 
     /// Save where every node is now (after nodes were dragged) as one undo step.
     void commitLayout();
@@ -68,6 +78,12 @@ public:
         std::string name, kind, type, value, parts, text;
         bool exposed = false;
         bool isList() const { return type.rfind("list of ", 0) == 0; }
+    };
+    /// A name made inside a handler or action by a Set Local node (`remember`). It is not in the header: it exists from its
+    /// node to the end of the block the node is in.
+    struct LocalInfo {
+        std::string name, type, node, scope;  // type: "" if its value doesn't check; node: the Set Local node's key; scope: the handler it is in
+        int line = 0;
     };
     /// Something the header says this script reaches outside itself for: one entity found by tag, every
     /// entity with a tag (a live list), or another script.
@@ -88,6 +104,9 @@ public:
         std::string parent;  // the component it belongs to ("" = a direct component of the Object): Material and Transform are under Mesh
         std::vector<std::pair<std::string, std::string>> details;  // label / value rows for the details panel
         ImU32 swatch = 0;    // a color to show in the details panel (a material's base color), 0 for none
+        /// Widgets for editing this component, drawn in the details panel in place of the read-only rows when set.
+        /// The host provides it (it knows what the component is made of), so the editor stays free of engine types.
+        std::function<void()> editor;
     };
 
     /// One thing Compile found.
@@ -115,9 +134,17 @@ public:
 
     /// What the Components panel shows: the Object asset this script belongs to (empty if none) and its
     /// components, set by the host each frame. `sharedBy` is how many Object assets use this script.
-    void setObject(const std::string& objectName, std::vector<ComponentInfo> components, int sharedBy);
+    /// `objectEditor` draws the Object's own properties (its script) in the details panel when the Object is selected,
+    /// and `addComponent` draws the "+ Add Component" control under the list. Both are optional.
+    void setObject(const std::string& objectName, std::vector<ComponentInfo> components, int sharedBy,
+                   std::function<void()> objectEditor = {}, std::function<void()> addComponent = {});
+
+    /// Select a component in the Components panel so its details show (`"@object"` is the Object itself).
+    void selectComponent(const std::string& name);
 
     const std::vector<VariableInfo>& variables() const { return m_vars; }
+    /// The Local Variables sub-section of the Variables panel: every Set Local node's name, in script order.
+    const std::vector<LocalInfo>& locals() const { return m_locals; }
     const std::vector<ReferenceInfo>& references() const { return m_refs; }
     /// The enums and structs the script can use as types (and `hit`).
     const std::vector<TypeInfo>& types() const { return m_types; }
@@ -151,6 +178,18 @@ public:
         auto it = m_variableRows.find(name);
         return it == m_variableRows.end() ? ImVec2(0, 0) : it->second;
     }
+
+    /// Where a local's row in the Variables panel was drawn last frame (for tests that click it); (0, 0) if it isn't shown.
+    ImVec2 localRow(const std::string& name) const {
+        auto it = m_localRows.find(name);
+        return it == m_localRows.end() ? ImVec2(0, 0) : it->second;
+    }
+
+    /// Zoom and move the view so every node is in it, on the next frame (what the Fit view button does).
+    void requestFit() { m_needsFit = true; }
+
+    /// Where the Local Variables heading was drawn last frame (for tests).
+    ImVec2 localsHeader() const { return m_localsHeader; }
 
     /// Where the Compile button was drawn last frame (for tests).
     ImVec2 compileButton() const { return m_compileButton; }
@@ -218,6 +257,9 @@ private:
     bool editRaw(const char* op, const std::string& a1, const std::string& a2, const std::string& a3, const std::string& a4);
     void freezeLayout();
     void addAt(const std::string& name, const std::string& parent, int slot, int index, bool useSpawn, ImVec2 spawn);
+    /// Put a node on the canvas that is not connected to anything: it is kept beside the script and is not part of
+    /// its text until it is wired in. Any event, action or flow node can be added this way.
+    void addFloating(const std::string& name, ImVec2 spawn);
     std::string layoutFile() const { return m_path + ".layout"; }
 
     struct CatalogEntry {
@@ -232,12 +274,17 @@ private:
     void rebuild(const Json::Value& model);
     bool updateInPlace(const Json::Value& model);
     void layout();
-    float placeChain(const std::string& first, float x, float y);
     float nodeHeight(const ScriptNode* n) const;
 
     // The menus
     void drawMenu(const ScriptMenuContext& ctx);
+    /// What drawMenu would offer for `ctx`, flat, for the menu's search.
+    std::vector<ScriptSearchResult> searchResults(const ScriptMenuContext& ctx);
     void statementMenu(const std::string& parent, int slot, int index, bool useSpawn = false, ImVec2 spawn = ImVec2(0, 0));
+    /// The statement nodes, by category, each added as a node that is not connected to anything.
+    void floatingMenu(ImVec2 spawn);
+    /// The value nodes, by category, each added as a node that is plugged into nothing.
+    void floatingValueMenu(ImVec2 spawn);
     ScriptNode* nodeById(int id) const;
     ScriptNode* nodeByKey(const std::string& key) const;
     /// Where a node added at an execution output of `from` goes: parent, body slot, index.
@@ -282,7 +329,7 @@ private:
     /// Plug the variable a Get node carries into the value pin `toPinId` of `to` (what wiring it does).
     void plugGetter(ScriptNode& getter, ScriptNode& to, int toPinId);
     /// A node that is not in the script yet and has a pin that can take a variable (the script library asks the
-    /// checker, see forge_graph_fits). `text` is what the pin is given: the variable, or for a condition `X is true`.
+    /// checker, see propulsion_graph_fits). `text` is what the pin is given: the variable, or for a condition `X is true`.
     struct Fit {
         std::string node, pin, category, text;
     };
@@ -313,6 +360,7 @@ private:
     std::map<std::string, std::string> m_shared;
     std::map<std::string, std::vector<std::string>> m_feeders;  // statement key -> the value nodes feeding it
     std::vector<VariableInfo> m_vars;
+    std::vector<LocalInfo> m_locals;
     std::vector<ReferenceInfo> m_refs;
     std::vector<TypeInfo> m_types;
     std::vector<std::string> m_scripts;  // the other scripts beside this one, relative to it
@@ -334,6 +382,8 @@ private:
     std::string m_objectName;
     std::vector<ComponentInfo> m_components;
     int m_sharedBy = 0;
+    std::function<void()> m_objectEditor;   // see setObject
+    std::function<void()> m_addComponent;
     std::string m_selectedVar;
     std::string m_selectedRef;
     std::string m_selectedComponent;   // "" none, "@object" the Object itself, or a component's name
@@ -376,6 +426,8 @@ private:
     bool m_resultsOpen = false;
     ImVec2 m_compileButton = ImVec2(0, 0);
     std::map<std::string, ImVec2> m_variableRows;
+    std::map<std::string, ImVec2> m_localRows;
+    ImVec2 m_localsHeader = ImVec2(0, 0);
     std::vector<Problem> m_liveProblems;  // the problems in the script as it is now (Compile copies them)
 
     struct Getter {
@@ -392,4 +444,4 @@ private:
     std::vector<std::function<void()>> m_pending;  // work asked for while drawing, done after
 };
 
-} // namespace Forge
+} // namespace Propulsion

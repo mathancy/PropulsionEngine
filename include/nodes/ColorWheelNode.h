@@ -2,7 +2,7 @@
 
 #include "NodeTypes.h"
 
-namespace Forge {
+namespace Propulsion {
 
 // Color Wheel Node - provides color output via interactive color picker
 struct ColorWheelNode : public Node {
@@ -37,4 +37,4 @@ struct ColorWheelNode : public Node {
     bool updateColorFromHex();
 };
 
-} // namespace Forge
+} // namespace Propulsion

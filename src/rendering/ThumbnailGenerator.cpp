@@ -18,7 +18,7 @@
 #include <cfloat>
 #include <algorithm>
 
-namespace Forge {
+namespace Propulsion {
 
 ThumbnailGenerator::ThumbnailGenerator(VulkanContext* context)
     : m_vulkanContext(context) {
@@ -1806,4 +1806,4 @@ void ThumbnailGenerator::cleanup() {
     CrashHandler::logInfo("ThumbnailGenerator: Cleaned up all resources");
 }
 
-} // namespace Forge
+} // namespace Propulsion

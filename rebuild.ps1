@@ -1,12 +1,12 @@
-# Forge Engine Quick Rebuild Script
+# Propulsion MK I Quick Rebuild Script
 # Fast clean rebuild for development
-# cd G:\ForgeEngine; .\rebuild.ps1
+# cd G:\PropulsionMKI; .\rebuild.ps1
 
 $ErrorActionPreference = "Stop"
-$Host.UI.RawUI.WindowTitle = "Forge Engine Rebuild"
+$Host.UI.RawUI.WindowTitle = "Propulsion MK I Rebuild"
 
 try {
-    Write-Host "=== Forge Engine Clean Rebuild ===" -ForegroundColor Cyan
+    Write-Host "=== Propulsion MK I Clean Rebuild ===" -ForegroundColor Cyan
     Write-Host ""
     
     $engineDir = $PSScriptRoot
@@ -43,7 +43,7 @@ try {
     Write-Host ""
     
     # Build Debug configuration
-    Write-Host "Building Forge Engine (Debug)..." -ForegroundColor Yellow
+    Write-Host "Building Propulsion MK I (Debug)..." -ForegroundColor Yellow
     Write-Host "This may take 1-3 minutes..." -ForegroundColor Gray
     Write-Host ""
     
@@ -81,7 +81,7 @@ try {
     # Done
     Write-Host "=== REBUILD COMPLETE ===" -ForegroundColor Green
     Write-Host ""
-    Write-Host "To run: cd `"$engineDir`" ; .\ForgeEngine.exe" -ForegroundColor Yellow
+    Write-Host "To run: cd `"$engineDir`" ; .\PropulsionMKI.exe" -ForegroundColor Yellow
     Write-Host ""
     
 } catch {

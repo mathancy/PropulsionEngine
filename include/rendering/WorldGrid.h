@@ -4,7 +4,7 @@
 #include <glm/glm.hpp>
 #include <memory>
 
-namespace Forge {
+namespace Propulsion {
 
 class Shader;
 class Camera;
@@ -64,5 +64,5 @@ private:
     glm::vec3 m_axisYColor;
 };
 
-} // namespace Forge
+} // namespace Propulsion
 

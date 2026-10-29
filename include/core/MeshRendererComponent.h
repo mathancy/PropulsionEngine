@@ -12,7 +12,7 @@
 #include <string>
 #include <glm/glm.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 /**
  * Mesh Renderer component - controls how an Object's mesh is rendered.
@@ -67,4 +67,4 @@ public:
     }
 };
 
-} // namespace Forge
+} // namespace Propulsion

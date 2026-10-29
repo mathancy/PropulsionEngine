@@ -6,7 +6,7 @@
 #include <vector>
 #include <memory>
 
-namespace Forge {
+namespace Propulsion {
 
 class VulkanContext;
 
@@ -24,6 +24,9 @@ struct UniformBufferObject {
     alignas(16) glm::vec4 heightParams;       // x=heightScale, y=invertHeight, z=unused, w=unused
     alignas(16) glm::vec3 cameraPos;          // Camera position for specular calculations
     alignas(4) float padding;
+    alignas(16) glm::ivec4 textureSlots;      // places in the texture table: x=base colour, y=metallic, z=roughness, w=normal (-1: none)
+    alignas(16) glm::ivec4 textureSlots2;     // x=occlusion, y=emissive, z=height, w=opacity (-1: none)
+    alignas(16) glm::vec4 surfaceParams;      // x=blend mode (0 opaque, 1 masked, 2 translucent), y=opacity, z=mask cutoff, w=1 if two sided
 };
 
 // Push constants for gizmo rendering (model + color change per draw)
@@ -43,15 +46,28 @@ public:
     // Maximum number of objects that can be rendered per frame
     static constexpr uint32_t MAX_OBJECTS = 256;
     
-    // Standard shader (no push constants)
-    Shader(VulkanContext* context, const char* vertexPath, const char* fragmentPath, VkRenderPass renderPass = VK_NULL_HANDLE, VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT, bool depthTestEnable = true, bool supportsTextures = false);
+    // Standard shader (no push constants). `extraSetLayout`, if given, is a second descriptor set (set 1) that the shader reads
+    // and the draw code binds itself: the scene's lights and environment (see SceneLighting).
+    // `bindlessSetLayout`, if given (it needs `extraSetLayout` too), is a third descriptor set (set 2): the table of every material texture
+    // (see TextureTable). A shader with it also draws with a cull mode chosen per draw (`setCullMode`), so two-sided materials can show their backs.
+    Shader(VulkanContext* context, const char* vertexPath, const char* fragmentPath, VkRenderPass renderPass = VK_NULL_HANDLE, VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT, bool depthTestEnable = true, bool supportsTextures = false, VkDescriptorSetLayout extraSetLayout = VK_NULL_HANDLE, VkDescriptorSetLayout bindlessSetLayout = VK_NULL_HANDLE);
     
     // Gizmo shader with push constants, MSAA support, and alpha blending
     static std::unique_ptr<Shader> createGizmoShader(VulkanContext* context, const char* vertexPath, const char* fragmentPath, VkRenderPass renderPass, VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT);
     
     ~Shader();
 
-    void bind(VkCommandBuffer commandBuffer);
+    // `variant` is a pipeline added by addVariant (0, or one that doesn't exist, is the normal one).
+    void bind(VkCommandBuffer commandBuffer, int variant = 0);
+
+    // Another pipeline for the same shader inputs: same vertex shader, state, descriptor sets and layout, a different fragment shader
+    // and/or alpha blending (colour already multiplied by alpha, depth not written: for see-through surfaces). Returns its number for `bind`,
+    // or 0 if it couldn't be made. Used for the ray-traced version of the scene shader (shaders/basic_rt_frag.spv) and for translucent draws.
+    int addVariant(const std::string& fragmentPath, VkRenderPass renderPass, bool blended);
+    bool hasVariant(int variant) const { return variant > 0 && variant <= static_cast<int>(m_variants.size()); }
+
+    // A shader made with a bindless set: the faces to cull, for the draws after this call (two-sided draws cull none).
+    void setCullMode(VkCommandBuffer commandBuffer, bool twoSided) const;
     
     // Dynamic uniform buffer methods for multi-object rendering
     void updateUniformBuffer(uint32_t currentFrame, const UniformBufferObject& ubo);
@@ -80,6 +96,7 @@ public:
     
     VkPipeline getPipeline() const { return m_pipeline; }
     VkPipelineLayout getPipelineLayout() const { return m_pipelineLayout; }
+    VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descriptorSetLayout; }  // set 0: the per-object uniforms and textures
     VkDescriptorSet getDescriptorSet(uint32_t frame) const { return m_descriptorSets[frame]; }
 
 private:
@@ -89,7 +106,9 @@ private:
     void createDescriptorSetLayout();
     void createTexturedDescriptorSetLayout();
     void createGizmoDescriptorSetLayout();
-    void createGraphicsPipeline(const std::string& vertexPath, const std::string& fragmentPath, VkRenderPass renderPass);
+    // Builds the pipeline (and, unless `variantOut` is given, the pipeline layout it uses). With `variantOut` it makes another
+    // pipeline for the existing layout and stores it there.
+    void createGraphicsPipeline(const std::string& vertexPath, const std::string& fragmentPath, VkRenderPass renderPass, VkPipeline* variantOut = nullptr, bool blended = false);
     void createGizmoPipeline(const std::string& vertexPath, const std::string& fragmentPath, VkRenderPass renderPass);
     void createUniformBuffers();
     void createGizmoUniformBuffers();
@@ -102,8 +121,13 @@ private:
 
     VulkanContext* m_context;
     VkPipeline m_pipeline;
+    std::vector<VkPipeline> m_variants;  // variant n is m_variants[n - 1]
+    std::string m_vertexPath;
+    VkDescriptorSetLayout m_bindlessSetLayout = VK_NULL_HANDLE;  // not owned
+    bool m_dynamicCull = false;
     VkPipelineLayout m_pipelineLayout;
     VkDescriptorSetLayout m_descriptorSetLayout;
+    VkDescriptorSetLayout m_extraSetLayout = VK_NULL_HANDLE;  // not owned
     VkCullModeFlags m_cullMode;
     bool m_depthTestEnable;
     bool m_usesPushConstants = false;
@@ -127,4 +151,4 @@ private:
     VkSampler m_defaultSampler = VK_NULL_HANDLE;
 };
 
-} // namespace Forge
+} // namespace Propulsion

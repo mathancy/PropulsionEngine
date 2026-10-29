@@ -22,7 +22,7 @@
 #include <map>
 #include <set>
 
-namespace Forge {
+namespace Propulsion {
 
 /// Where the user right-clicked, or let go of a wire, in a script graph.
 struct ScriptMenuContext {
@@ -40,15 +40,29 @@ struct ScriptMenuContext {
     ImVec2 spawn = ImVec2(0, 0);
 };
 
+/// One thing the open menu can add, for typing to find it. Picking it does what choosing it in the menu does.
+struct ScriptSearchResult {
+    std::string label;     // what it is called
+    std::string category;  // shown beside it, and searched
+    std::string keywords;  // searched, not shown (how the node reads in the script)
+    std::string tooltip;
+    std::function<void()> pick;
+};
+
 /// What a script graph needs from its host. A script graph never changes itself: the user's actions
 /// are reported here, the host changes the script text, and the graph is rebuilt from the result.
 struct ScriptGraphHooks {
+    /// Everything the menu for this context can add (empty for a menu that adds nothing, which then can't be
+    /// searched). Asked once each time the menu opens, when the user starts typing.
+    std::function<std::vector<ScriptSearchResult>(const ScriptMenuContext&)> searchResults;
     /// A text field was edited (or a choice picked) and the edit confirmed.
     std::function<void(ScriptNode&, ScriptPinField&, const std::string& text)> onPinEdited;
     /// An execution wire was dragged from an output pin of `from` to the input pin of `to`.
     std::function<void(ScriptNode& from, int fromPinId, ScriptNode& to)> onConnectExec;
     /// The user pressed Delete with script nodes selected (one or many).
     std::function<void(const std::vector<ScriptNode*>&)> onDeleteNodes;
+    /// The user pressed Ctrl+D with script nodes selected (one or many).
+    std::function<void(const std::vector<ScriptNode*>&)> onDuplicateNodes;
     /// The user finished dragging nodes (one or many); each node's `position` is where it was dropped.
     std::function<void(const std::vector<ScriptNode*>&)> onNodesMoved;
     /// Draw the items of the context menu (called inside the open popup).
@@ -57,6 +71,8 @@ struct ScriptGraphHooks {
     std::function<void(ScriptNode*)> onSelected;
     /// A Get node's output was wired to a value pin of `to`.
     std::function<void(ScriptNode& getter, ScriptNode& to, int toPinId)> onConnectGetter;
+    /// The output of a value node that is plugged into nothing was wired to a value pin of `to`.
+    std::function<void(ScriptNode& value, ScriptNode& to, int toPinId)> onConnectValue;
     /// A variable (its name) was dragged from the Variables panel and dropped on a node's field.
     std::function<void(ScriptNode& node, ScriptPinField& field, const std::string& variable)> onDropVariableOnPin;
     /// ...or dropped on empty canvas, at this grid position.
@@ -98,6 +114,7 @@ struct EvaluatedMaterial {
     std::string aoTexturePath;
     std::string emissiveTexturePath;
     std::string heightTexturePath;
+    std::string opacityTexturePath;  // the Opacity / Opacity Mask pins: the texture's red channel is the alpha
     
     // Texture usage flags
     bool useAlbedoTexture = false;
@@ -107,6 +124,7 @@ struct EvaluatedMaterial {
     bool useAOTexture = false;
     bool useEmissiveTexture = false;
     bool useHeightTexture = false;
+    bool useOpacityTexture = false;
     
     // Texture strengths
     float metallicStrength = 1.0f;
@@ -168,6 +186,8 @@ public:
     bool isBoxSelecting() const { return m_isBoxSelecting; }
     /// Delete every selected node (the ones that can be deleted). Script graphs report it to the host.
     void deleteSelected();
+    /// Duplicate every selected node. Only script graphs: the host makes the copies (see onDuplicateNodes).
+    void duplicateSelected();
 
     // Undo and redo for material graphs: every change to the nodes, their values and their wires, made
     // by any means, is noticed when the interaction ends (mouse released, field left) and becomes one
@@ -371,6 +391,15 @@ private:
     std::vector<NodeConnection> m_menuConnections;  // what "Delete connection" in the open menu cuts
     bool m_menuWireOnly = false;                     // the menu is only that (a right-click on a wire)
 
+    // Typing in a script graph's menu searches it. The field only exists once something has been typed.
+    bool drawMenuSearch();
+    char m_menuSearch[128] = {};
+    bool m_searchShown = false;     // the field was drawn last frame (so it already has the keyboard)
+    bool m_searchCursorToEnd = false;  // the field has just been given the keyboard
+    bool m_searchLoaded = false;    // m_searchCandidates is for the menu that is open
+    int m_searchSelected = 0;
+    std::vector<ScriptSearchResult> m_searchCandidates;
+
     // Script graphs
     ScriptGraphHooks m_scriptHooks;
     ScriptMenuContext m_scriptMenu;
@@ -409,4 +438,4 @@ private:
     ClipboardData m_clipboard;
 };
 
-} // namespace Forge
+} // namespace Propulsion

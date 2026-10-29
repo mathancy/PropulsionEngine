@@ -1,9 +1,11 @@
 #include "nodegraph/NodeGraph.h"
 #include "ui/ImGuiTheme.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstring>
 
-namespace Forge {
+namespace Propulsion {
 
 NodeGraph::NodeGraph()
     : m_nextNodeId(1)
@@ -46,7 +48,7 @@ NodeGraph::NodeGraph()
 void NodeGraph::render(const ImVec2& size) {
     // High-DPI: the global UI scale is folded into the effective zoom, so every node
     // dimension (pins, padding, text) scales together via m_viewZoom.
-    m_viewZoom = m_userZoom * ForgeEngine::UI::getUIScale();
+    m_viewZoom = m_userZoom * PropulsionMKI::UI::getUIScale();
 
     // The node drawing code is authored in unscaled pixels (font->LegacySize, CalcTextSize)
     // and scaled only by m_viewZoom. Neutralize the DPI font scale for the canvas so it
@@ -112,7 +114,7 @@ void NodeGraph::render(const ImVec2& size) {
         canvasActive = ImGui::IsItemActive();
         // A variable dragged from the Variables panel and let go on empty canvas.
         if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("FORGE_VARIABLE")) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("PROPULSION_VARIABLE")) {
                 if (m_scriptHooks.onDropVariable) {
                     const ImVec2 g = screenToGraph(ImGui::GetMousePos(), canvasPos);
                     m_scriptHooks.onDropVariable(std::string(static_cast<const char*>(payload->Data)), ImVec2(std::round(g.x / m_gridSize), std::round(g.y / m_gridSize)));
@@ -263,6 +265,10 @@ void NodeGraph::renderSingleNodeBody(ImDrawList* drawList, Node* node, const ImV
     int hdrG = (hdrColor >> 8) & 0xFF;
     int hdrB = (hdrColor >> 16) & 0xFF;
     int hdrA = (hdrColor >> 24) & 0xFF;
+    // A script node that is not wired into the script yet is drawn faded, as a reminder that it makes no code.
+    const ScriptNode* scriptNode = dynamic_cast<const ScriptNode*>(node);
+    const bool floating = scriptNode && scriptNode->floating;
+    if (floating) hdrA = hdrA * 55 / 100;
     
     int leftR = std::min(255, (int)(hdrR * 1.15f));
     int leftG = std::min(255, (int)(hdrG * 0.9f));
@@ -290,6 +296,8 @@ void NodeGraph::renderSingleNodeBody(ImDrawList* drawList, Node* node, const ImV
         if (!sn->error.empty() && !node->selected) {
             borderColor = IM_COL32(230, 70, 70, 255);
             borderThickness = 2.0f * m_viewZoom;
+        } else if (sn->floating && !node->selected) {
+            borderColor = IM_COL32(120, 135, 175, 255);
         }
     }
     drawList->AddRect(nodeScreenPos, nodeEndPos, borderColor, 6.0f * m_viewZoom, 0, borderThickness);
@@ -964,6 +972,9 @@ void NodeGraph::handleInput(const ImVec2& canvasPos, const ImVec2& canvasSize, b
                         const int toPinId = m_draggingPinIsOutput ? targetHit.pinId : m_draggingPinId;
                         if (scriptFrom->carriesVariable()) {
                             if (m_scriptHooks.onConnectGetter) m_scriptHooks.onConnectGetter(*scriptFrom, *scriptTo, toPinId);
+                        } else if (scriptFrom->isData()) {
+                            // A computed value is plugged into a pin by the node it was made for; one that floats can be wired.
+                            if (scriptFrom->floating && m_scriptHooks.onConnectValue) m_scriptHooks.onConnectValue(*scriptFrom, *scriptTo, toPinId);
                         } else if (m_scriptHooks.onConnectExec) {
                             m_scriptHooks.onConnectExec(*scriptFrom, fromPinId, *scriptTo);
                         }
@@ -1028,6 +1039,11 @@ void NodeGraph::handleInput(const ImVec2& canvasPos, const ImVec2& canvasSize, b
         if (m_scriptHooks.onSelected) {
             m_scriptHooks.onSelected(dynamic_cast<ScriptNode*>(getNode(m_selectedNodeId)));
         }
+    }
+
+    // Ctrl+D duplicates the selected nodes of a script graph (the copies are connected to nothing)
+    if (m_hasScriptNodes && canvasHovered && !io.WantTextInput && !m_isBoxSelecting && selectedCount() > 0 && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+        duplicateSelected();
     }
 
     // Ctrl+D to duplicate selected node (material graphs)
@@ -1221,7 +1237,7 @@ void NodeGraph::handleInput(const ImVec2& canvasPos, const ImVec2& canvasSize, b
         float zoomDelta = io.MouseWheel * 0.1f;
         float oldZoom = m_viewZoom;
         m_userZoom = std::clamp(m_userZoom + zoomDelta * m_userZoom, 0.1f, 4.0f);
-        m_viewZoom = m_userZoom * ForgeEngine::UI::getUIScale();
+        m_viewZoom = m_userZoom * PropulsionMKI::UI::getUIScale();
         
         // Adjust offset so the point under the mouse stays stationary
         if (oldZoom != m_viewZoom) {
@@ -1397,8 +1413,11 @@ EvaluatedMaterial NodeGraph::evaluateMaterial() const {
                 }
                 break;
             case 9:  // Opacity
-                break;
             case 10: // Opacity Mask
+                if (imageNode && !imageNode->selectedTexturePath.empty()) {
+                    result.opacityTexturePath = imageNode->selectedTexturePath;
+                    result.useOpacityTexture = true;
+                }
                 break;
             case 11: // Refraction
                 break;
@@ -1447,7 +1466,7 @@ void NodeGraph::removeConnection(int inNodeId, int inPinId) {
 void NodeGraph::resetView() {
     m_viewOffset = ImVec2(0.0f, 0.0f);
     m_userZoom = 1.0f;
-    m_viewZoom = m_userZoom * ForgeEngine::UI::getUIScale();
+    m_viewZoom = m_userZoom * PropulsionMKI::UI::getUIScale();
 }
 
 ImVec2 NodeGraph::snapToGrid(const ImVec2& pos) const {
@@ -1457,20 +1476,198 @@ ImVec2 NodeGraph::snapToGrid(const ImVec2& pos) const {
     );
 }
 
+namespace {
+
+std::string lowered(const std::string& s) {
+    std::string out = s;
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+
+/// How well one typed word fits an entry: 0 starts its name, 1 starts a word of it, 2 is in the name,
+/// 3 is only in its category or keywords; -1 is nowhere.
+int wordRank(const std::string& name, const std::string& other, const std::string& word) {
+    const size_t at = name.find(word);
+    if (at == 0) return 0;
+    if (at != std::string::npos) return name[at - 1] == ' ' ? 1 : 2;
+    return other.find(word) != std::string::npos ? 3 : -1;
+}
+
+}  // namespace
+
+bool NodeGraph::drawMenuSearch() {
+    if (!m_scriptHooks.searchResults) return false;
+    ImGuiIO& io = ImGui::GetIO();
+    // Nothing shows until a key is pressed: the first letter opens the field, and goes into it.
+    const bool typed = !io.InputQueueCharacters.empty();
+    if (m_menuSearch[0] == '\0' && !typed) {
+        m_searchShown = false;
+        return false;
+    }
+    if (!m_searchLoaded) {
+        m_searchCandidates = m_scriptHooks.searchResults(m_scriptMenu);
+        m_searchLoaded = true;
+    }
+    if (m_searchCandidates.empty()) {
+        m_searchShown = false;
+        return false;  // this menu adds nothing, so there is nothing to find
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+        return true;
+    }
+
+    const float width = PropulsionMKI::UI::scaled(340.0f);
+    if (!m_searchShown) {
+        // The field only takes the keyboard a frame after it is first drawn, which is too late for the key that
+        // opened it: those characters are put in by hand, and the field then starts with the cursor after them.
+        size_t length = strlen(m_menuSearch);
+        for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
+            const ImWchar c = io.InputQueueCharacters[i];
+            char utf8[5] = {};
+            if (c < 32 || c == 127) continue;
+            if (c < 0x80) {
+                utf8[0] = static_cast<char>(c);
+            } else if (c < 0x800) {
+                utf8[0] = static_cast<char>(0xC0 | (c >> 6));
+                utf8[1] = static_cast<char>(0x80 | (c & 0x3F));
+            } else if (c < 0x10000) {
+                utf8[0] = static_cast<char>(0xE0 | (c >> 12));
+                utf8[1] = static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+                utf8[2] = static_cast<char>(0x80 | (c & 0x3F));
+            } else {
+                utf8[0] = static_cast<char>(0xF0 | (c >> 18));
+                utf8[1] = static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+                utf8[2] = static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+                utf8[3] = static_cast<char>(0x80 | (c & 0x3F));
+            }
+            const size_t n = strlen(utf8);
+            if (length + n >= sizeof(m_menuSearch)) break;
+            memcpy(m_menuSearch + length, utf8, n + 1);
+            length += n;
+        }
+        io.InputQueueCharacters.resize(0);
+        m_searchSelected = 0;
+        m_searchCursorToEnd = true;
+        ImGui::SetKeyboardFocusHere();
+    }
+    ImGui::SetNextItemWidth(width);
+    auto keepCursorAtEnd = [](ImGuiInputTextCallbackData* data) -> int {
+        bool* pending = static_cast<bool*>(data->UserData);
+        if (*pending) {
+            // Focusing a field selects all of it, and the next letter would replace what was typed.
+            data->CursorPos = data->SelectionStart = data->SelectionEnd = data->BufTextLen;
+            *pending = false;
+        }
+        return 0;
+    };
+    if (ImGui::InputTextWithHint("##menusearch", "Search nodes...", m_menuSearch, sizeof(m_menuSearch),
+                                 ImGuiInputTextFlags_CallbackAlways, keepCursorAtEnd, &m_searchCursorToEnd)) {
+        m_searchSelected = 0;
+    }
+    m_searchShown = true;
+
+    // The entries that have every word typed, best fit first (and in the menu's own order among equals).
+    std::vector<std::string> words;
+    {
+        const std::string query = lowered(m_menuSearch);
+        size_t start = 0;
+        while (start < query.size()) {
+            const size_t end = query.find(' ', start);
+            if (end == std::string::npos) {
+                words.push_back(query.substr(start));
+                break;
+            }
+            if (end > start) words.push_back(query.substr(start, end - start));
+            start = end + 1;
+        }
+    }
+    struct Hit {
+        int rank;
+        size_t index;
+    };
+    std::vector<Hit> hits;
+    for (size_t i = 0; i < m_searchCandidates.size(); i++) {
+        const ScriptSearchResult& r = m_searchCandidates[i];
+        const std::string name = lowered(r.label), other = lowered(r.category + " " + r.keywords);
+        int rank = 0;
+        for (const std::string& word : words) {
+            const int fit = wordRank(name, other, word);
+            if (fit < 0) {
+                rank = -1;
+                break;
+            }
+            rank += fit;
+        }
+        if (rank >= 0) hits.push_back({rank, i});
+    }
+    std::stable_sort(hits.begin(), hits.end(), [](const Hit& a, const Hit& b) { return a.rank < b.rank; });
+
+    bool moved = false;
+    if (!hits.empty()) {
+        const int last = static_cast<int>(hits.size()) - 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) { m_searchSelected++; moved = true; }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) { m_searchSelected--; moved = true; }
+        m_searchSelected = (std::max)(0, (std::min)(m_searchSelected, last));
+    }
+
+    int picked = -1;
+    if (hits.empty()) {
+        ImGui::TextDisabled("Nothing matches");
+    } else {
+        const float row = ImGui::GetTextLineHeightWithSpacing();
+        const float height = (std::min)(static_cast<int>(hits.size()), 10) * row + ImGui::GetStyle().WindowPadding.y;
+        ImGui::BeginChild("##menusearchresults", ImVec2(width, height), false);
+        for (size_t k = 0; k < hits.size(); k++) {
+            const ScriptSearchResult& r = m_searchCandidates[hits[k].index];
+            const bool current = static_cast<int>(k) == m_searchSelected;
+            ImGui::PushID(static_cast<int>(hits[k].index));
+            if (ImGui::Selectable(r.label.c_str(), current)) picked = static_cast<int>(k);
+            if (ImGui::IsItemHovered() && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) m_searchSelected = static_cast<int>(k);
+            if (!r.category.empty()) {
+                const ImVec2 size = ImGui::CalcTextSize(r.category.c_str());
+                ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetItemRectMax().x - size.x - ImGui::GetStyle().ItemSpacing.x, ImGui::GetItemRectMin().y),
+                                                    ImGui::GetColorU32(ImGuiCol_TextDisabled), r.category.c_str());
+            }
+            if (current && moved) ImGui::SetScrollHereY();
+            if (ImGui::IsItemHovered() && !r.tooltip.empty()) PropulsionMKI::UI::tooltip("%s", r.tooltip.c_str());
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+        if (picked < 0 && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))) picked = m_searchSelected;
+    }
+
+    if (picked >= 0) {
+        const ScriptSearchResult& r = m_searchCandidates[hits[static_cast<size_t>(picked)].index];
+        if (r.pick) r.pick();
+        ImGui::CloseCurrentPopup();
+    }
+    return true;
+}
+
 void NodeGraph::renderContextMenu(const ImVec2& canvasPos) {
     if (m_showContextMenu) {
         ImGui::OpenPopup("NodeGraphContextMenu");
         m_showContextMenu = false;  // Only open once
+        m_menuSearch[0] = '\0';
+        m_searchShown = false;
+        m_searchLoaded = false;
+        m_searchSelected = 0;
+        m_searchCandidates.clear();
     }
-    
+
     // The canvas has no window padding of its own, and the popup (and its submenus) would inherit that.
-    ForgeEngine::UI::pushPopupPadding();
+    PropulsionMKI::UI::pushPopupPadding();
 
     if (m_hasScriptNodes) {
-        // A script graph: the host draws the menu for where the user clicked.
+        // A script graph: the host draws the menu for where the user clicked, unless the user is typing to find a node.
         if (ImGui::BeginPopup("NodeGraphContextMenu")) {
-            if (!m_menuWireOnly && m_scriptHooks.drawMenu) m_scriptHooks.drawMenu(m_scriptMenu);
-            drawConnectionMenuItems(!m_menuWireOnly);
+            if (!m_menuWireOnly && drawMenuSearch()) {
+                // the results are the menu
+            } else {
+                if (!m_menuWireOnly && m_scriptHooks.drawMenu) m_scriptHooks.drawMenu(m_scriptMenu);
+                drawConnectionMenuItems(!m_menuWireOnly);
+            }
             ImGui::EndPopup();
         }
         ImGui::PopStyleVar();
@@ -1545,7 +1742,7 @@ void NodeGraph::drawConnectionMenuItems(bool separator) {
         ImGui::MenuItem(label.c_str());
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            ForgeEngine::UI::tooltip("A statement has to stay in its chain, so this wire can't be cut.\nMove the node (drag its input wire) or delete it instead.");
+            PropulsionMKI::UI::tooltip("A statement has to stay in its chain, so this wire can't be cut.\nMove the node (drag its input wire) or delete it instead.");
         }
         return;
     }
@@ -1694,6 +1891,8 @@ bool NodeGraph::canConnect(const Node* fromNode, const NodePin& fromPin, const N
         const ScriptNode* outNode = fromPin.isOutput ? a : b;
         const ScriptNode* inNode = fromPin.isOutput ? b : a;
         if (outNode->carriesVariable()) return !inNode->carriesVariable() && fromPin.type != PinType::Exec && toPin.type != PinType::Exec;
+        // So can the output of a value node that is plugged into nothing yet.
+        if (outNode->isData() && outNode->floating) return !inNode->isData() && fromPin.type != PinType::Exec && toPin.type != PinType::Exec;
         return fromPin.type == PinType::Exec && toPin.type == PinType::Exec;
     }
 
@@ -1832,9 +2031,9 @@ Node* NodeGraph::getTopmostNodeAt(const ImVec2& screenPos, const ImVec2& canvasP
     return nullptr;
 }
 
-} // namespace Forge
+} // namespace Propulsion
 
-namespace Forge {
+namespace Propulsion {
 
 void NodeGraph::clear() {
     m_connections.clear();
@@ -1890,7 +2089,7 @@ void NodeGraph::fitView(const ImVec2& canvasSize) {
         maxX = (std::max)(maxX, (n->position.x + n->size.x) * m_gridSize);
         maxY = (std::max)(maxY, (n->position.y + 1.5f + rows) * m_gridSize);
     }
-    const float uiScale = ForgeEngine::UI::getUIScale();
+    const float uiScale = PropulsionMKI::UI::getUIScale();
     const float padding = 40.0f * uiScale;
     float width = (std::max)(maxX - minX, 1.0f);
     float height = (std::max)(maxY - minY, 1.0f);
@@ -1901,4 +2100,4 @@ void NodeGraph::fitView(const ImVec2& canvasSize) {
     m_viewOffset.y = padding / m_viewZoom - minY;
 }
 
-} // namespace Forge
+} // namespace Propulsion

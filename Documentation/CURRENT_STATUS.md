@@ -110,7 +110,7 @@ Test-Path "$env:VULKAN_SDK\Bin\glslc.exe"  # Should be True
 
 ### STEP 2: Compile Shaders
 ```powershell
-cd g:\ForgeEngine
+cd g:\PropulsionMKI
 .\compile_shaders.ps1
 ```
 

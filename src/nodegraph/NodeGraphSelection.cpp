@@ -17,7 +17,7 @@
 
 #include <algorithm>
 
-namespace Forge {
+namespace Propulsion {
 
 // ---------------------------------------------------------------------------------------------
 // Selection
@@ -78,6 +78,12 @@ void NodeGraph::deleteSelected() {
     for (const auto& n : m_nodes) {
         if (n->selected) m_selectedNodeId = n->id;
     }
+}
+
+void NodeGraph::duplicateSelected() {
+    if (!m_hasScriptNodes) return;
+    const std::vector<ScriptNode*> nodes = selectedScriptNodes();
+    if (!nodes.empty() && m_scriptHooks.onDuplicateNodes) m_scriptHooks.onDuplicateNodes(nodes);
 }
 
 void NodeGraph::drawBoxSelect(ImDrawList* drawList) {
@@ -238,4 +244,4 @@ bool NodeGraph::redo() {
     return true;
 }
 
-} // namespace Forge
+} // namespace Propulsion

@@ -1,6 +1,6 @@
 # Font Awesome Setup
 
-Forge Engine uses Font Awesome 7 Free icons for the UI.
+Propulsion MK I uses Font Awesome 7 Free icons for the UI.
 
 ## Installation
 

@@ -4,7 +4,7 @@
 #include <string>
 #include <functional>
 
-namespace Forge {
+namespace Propulsion {
 
 class Window {
 public:
@@ -55,4 +55,4 @@ private:
     std::function<void(float)> m_contentScaleCallback;
 };
 
-} // namespace Forge
+} // namespace Propulsion

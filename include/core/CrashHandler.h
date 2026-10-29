@@ -6,10 +6,11 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+#include "core/OutputLog.h"
 #include <Windows.h>
 #include <DbgHelp.h>
 
-namespace Forge {
+namespace Propulsion {
 
 class CrashHandler {
 public:
@@ -19,8 +20,12 @@ public:
     static void logError(const std::string& message);
     static void logWarning(const std::string& message);
     static void logInfo(const std::string& message);
+
+    /// The log file of this session (empty if it could not be created).
+    static const std::string& currentLogFile() { return s_currentLogFile; }
     
 private:
+    static void fileSink(const LogEntry& entry, const std::string& category);
     static std::string getLogFilePath();
     static std::string getCurrentTimestamp();
     static std::string getSystemInfo();
@@ -32,6 +37,7 @@ private:
     static std::string s_logDirectory;
     static std::string s_currentLogFile;
     static bool s_initialized;
+    static int s_sinkHandle;
 };
 
-} // namespace Forge
+} // namespace Propulsion

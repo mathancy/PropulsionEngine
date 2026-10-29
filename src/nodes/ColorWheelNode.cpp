@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <cmath>
 
-namespace Forge {
+namespace Propulsion {
 
 ColorWheelNode::ColorWheelNode(int nodeId, ImVec2 pos)
     : Node(nodeId, "Color Wheel", "ColorWheel", pos, ImVec2(8, 7)),
@@ -102,4 +102,4 @@ bool ColorWheelNode::updateColorFromHex() {
     return false;
 }
 
-} // namespace Forge
+} // namespace Propulsion

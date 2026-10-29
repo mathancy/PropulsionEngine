@@ -1,0 +1,78 @@
+// player.prop: the player object, written the way the node editor would produce it.
+//
+// What it does: walks (moveForward / moveRight), turns and looks (lookX / lookY), reports a jump press, and keeps
+// health. What it leaves to the engine: staying on the floor, falling, bumping into walls and the jump itself.
+// Give the Object a Character Movement component (its Jump Action is "jump") and an Input Mapping, and a camera or
+// Spring Arm for the view; the script never needs to know about any of them.
+//
+// "// node N: Name" lines mark which node the next statement came from, so the graph and this
+// text can stay in sync (SPEC 10). The language ignores them; the editor reads them.
+
+header:
+	needs component:Transform
+	needs system:Input
+	needs system:Audio
+	needs system:UI
+
+	tag name:"player"
+
+	constant name:MaxHealth type:integer value:100
+	variable name:Speed type:decimal value:5.0 exposed:true
+	variable name:TurnSpeed type:decimal value:90.0 exposed:true
+	variable name:Health type:integer value:100
+	variable name:JumpCount type:integer
+	event name:Died
+
+implement:
+	// node 1: On Tick
+	every frame:
+		// node 2: Get Axis [moveForward]
+		remember Forward axis moveForward of Input
+		// node 3: Get Axis [moveRight]
+		remember Sideways axis moveRight of Input
+		// node 4: Multiply
+		remember ForwardAmount Forward times Speed
+		remember SidewaysAmount Sideways times Speed
+		// Walking stays on the ground even while looking up or down: forward is the way the player faces, flattened.
+		remember Ahead forward of Self
+		make Ahead.Z 0
+		remember Level normalized Ahead
+		remember Push Level times ForwardAmount
+		add Push per second to Transform.Loc
+		// node 5: Move Object
+		move Self right by SidewaysAmount per second
+		// node 6: Get Axis [lookX]
+		remember Turn axis lookX of Input
+		remember TurnAmount Turn times TurnSpeed
+		// node 7: Rotate Object
+		// Mouse right is positive, and turning right is a negative yaw (positive yaw turns left).
+		subtract TurnAmount per second from Transform.Rot.Z
+		// node 11: Get Axis [lookY]
+		remember LookUp axis lookY of Input
+		remember LookAmount LookUp times TurnSpeed
+		// node 12: Rotate Object
+		add LookAmount per second to Transform.Rot.X
+		// Straight up or down would make "forward" meaningless, so stop a little short.
+		remember Tilt Transform.Rot.X
+		remember Limited clamp Tilt between -89 and 89
+		make Transform.Rot.X Limited
+
+	// node 8: When Action Pressed [jump]
+	when Input starts pressing jump:
+		// The engine's Character Movement does the jumping (and only from the ground); this is the feedback.
+		add 1 to JumpCount
+		// node 9: Play Sound
+		do Play on Audio sound:"jump.wav"
+		// node 10: Print Debug Message
+		print "Jumped " joined with JumpCount
+
+	action TakeDamage amount:integer:
+		subtract amount from Health, floored at 0
+		if Health is at most 0, then send Died
+
+	action Heal amount:integer:
+		add amount to Health, capped at MaxHealth
+
+	when Died:
+		print "The player died"
+		do Show on UI element:"game over"

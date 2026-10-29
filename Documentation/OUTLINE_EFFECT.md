@@ -48,10 +48,10 @@ A high-performance, production-ready screen-space outline highlight system for V
 
 ```cpp
 class MyEngine {
-    std::unique_ptr<Forge::OutlineEffect> m_outlineEffect;
+    std::unique_ptr<Propulsion::OutlineEffect> m_outlineEffect;
     
     void init() {
-        m_outlineEffect = std::make_unique<Forge::OutlineEffect>(m_vulkanContext.get());
+        m_outlineEffect = std::make_unique<Propulsion::OutlineEffect>(m_vulkanContext.get());
         m_outlineEffect->initialize(VkExtent2D{1920, 1080}); // Your resolution
     }
 };
@@ -293,5 +293,5 @@ Based on Vulkan post-processing techniques from:
 ---
 
 **Status**: Production-ready, tested with Vulkan 1.3+
-**Author**: ForgeEngine Team
+**Author**: PropulsionMKI Team
 **Date**: November 2025

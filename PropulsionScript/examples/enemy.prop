@@ -1,0 +1,58 @@
+// enemy.prop: patrols a list of waypoints, chases and attacks the player.
+
+header:
+	needs component:Transform
+	needs entity:Player file:"player.prop" tag:"player"
+
+	// CHANGED: added a tag so a spawner can find every enemy with "needs entities:Foes tag:"enemy"".
+	tag name:"enemy"
+
+	constant name:Speed type:decimal value:3.0
+	constant name:ChaseRange type:decimal value:10.0
+	constant name:AttackRange type:decimal value:1.5
+	constant name:AttackDamage type:integer value:10
+	variable name:Health type:integer value:30
+	variable name:Waypoints type:list of vector3
+	variable name:WaypointIndex type:integer
+	variable name:Target type:vector3
+	variable name:AttackCooldown type:timer
+	event name:Defeated
+
+implement:
+	when created:
+		make Target item WaypointIndex of Waypoints
+
+	every frame:
+		// CHANGED: added this guard so the enemy does nothing when there is no player (SPEC 4.6).
+		if Player is missing, then finish
+		remember DistanceToPlayer distance from Self to Player
+		if DistanceToPlayer is above ChaseRange:
+			do Patrol
+		otherwise if DistanceToPlayer is above AttackRange:
+			// CHANGED: "Player.Transform.position" is now "Transform.Loc of Player".
+			make Target Transform.Loc of Player
+			// CHANGED: "(Speed * Time.delta)" is now "Speed per second", and "Transform.position" is now "Transform.Loc".
+			move Transform.Loc toward Target by Speed per second
+		otherwise:
+			do Attack
+
+	action Patrol:
+		// CHANGED: "Transform.position" is now "Transform.Loc".
+		remember DistanceToTarget distance from Transform.Loc to Target
+		if DistanceToTarget is below 0.5:
+			add 1 to WaypointIndex
+			if WaypointIndex is count of Waypoints, then make WaypointIndex 0
+			make Target item WaypointIndex of Waypoints
+		move Transform.Loc toward Target by Speed per second
+
+	action Attack:
+		if AttackCooldown is below 1 second, then finish
+		// CHANGED: "Player.TakeDamage" is now "do TakeDamage on Player".
+		do TakeDamage on Player amount:AttackDamage
+		reset AttackCooldown
+
+	action TakeDamage amount:integer:
+		subtract amount from Health, floored at 0
+		if Health is at most 0:
+			send Defeated
+			destroy Self

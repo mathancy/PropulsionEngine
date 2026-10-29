@@ -1,69 +1,21 @@
-PROPRIETARY LICENSE AGREEMENT
+MIT License
 
-Copyright (c) 2025 Forgeworks Interactive Limited. All rights reserved.
+Copyright (c) 2025 Forgeworks Interactive Limited
 
-FORGE ENGINE - PROPRIETARY SOFTWARE LICENSE
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-This software and associated documentation files (the "Software") are the 
-exclusive property of Forgeworks Interactive Limited ("the Company").
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-GRANT OF LICENSE:
-The Company grants a limited, non-exclusive, non-transferable license to use 
-the Software solely to employees and authorized contractors of Forgeworks 
-Interactive Limited ("Authorized Users") for the express purpose of developing 
-games and interactive entertainment products for the Company.
-
-RESTRICTIONS:
-1. The Software may NOT be copied, modified, merged, published, distributed, 
-   sublicensed, or sold except as expressly authorized by the Company.
-
-2. The Software may NOT be used for any purpose other than the development of 
-   games and interactive products for Forgeworks Interactive Limited.
-
-3. The Software may NOT be shared with, disclosed to, or made accessible to 
-   any third party without prior written consent from the Company.
-
-4. Authorized Users may NOT remove or alter any copyright, trademark, or 
-   proprietary notices contained in the Software.
-
-5. Upon termination of employment or contract with the Company, all access 
-   to and use of the Software must cease immediately.
-
-OWNERSHIP:
-All rights, title, and interest in and to the Software, including all 
-intellectual property rights, remain exclusively with Forgeworks Interactive 
-Limited. No ownership rights are transferred under this license.
-
-WARRANTY DISCLAIMER:
-THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
-IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS 
-FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
-
-LIMITATION OF LIABILITY:
-IN NO EVENT SHALL FORGEWORKS INTERACTIVE LIMITED BE LIABLE FOR ANY CLAIM, 
-DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
-
-TERMINATION:
-This license is effective until terminated. The Company reserves the right 
-to terminate this license at any time. Upon termination, Authorized Users 
-must destroy all copies of the Software in their possession.
-
-GOVERNING LAW:
-This license shall be governed by and construed in accordance with the laws 
-applicable to Forgeworks Interactive Limited's jurisdiction.
-
-For questions regarding this license, contact:
-Forgeworks Interactive Limited
-Legal Department
-
----
-
-THIRD-PARTY COMPONENTS:
-This Software incorporates third-party libraries which are subject to their 
-own respective licenses:
-- GLFW (zlib/libpng license)
-- Dear ImGui (MIT license)
-- GLM (MIT license)
-- GLAD (MIT license)
-
-See the respective library directories for their license terms.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

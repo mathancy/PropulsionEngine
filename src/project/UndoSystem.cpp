@@ -11,13 +11,14 @@
 #include <vector>
 
 #include "Engine.h"
+#include "core/SceneHistory.h"
 #include "nodegraph/NodeGraph.h"
 #include "scripting/ScriptGraphEditor.h"
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-namespace Forge {
+namespace Propulsion {
 
 void Engine::pushUndoState() {
     if (m_selectedObjectIndex >= 0 && m_selectedObjectIndex < static_cast<int>(m_sceneObjects.size())) {
@@ -55,6 +56,19 @@ void Engine::undo() {
     if (graphTabUndo(false)) return;
     if (m_undoStack.empty()) return;
     
+    // An object that was added is taken out again, and one that was deleted comes back. (Not while playing: the scene is a
+    // copy then, and the step stays for when it stops.)
+    if (m_undoStack.back().kind != UndoState::Kind::Move) {
+        if (m_isPlaying) return;
+        UndoState step = m_undoStack.back();
+        m_undoStack.pop_back();
+        if (undoSceneChange(step, m_sceneObjects, m_selectedObjectIndex, m_redoStack)) {
+            m_gizmoActive = false;
+            markProjectModified();
+        }
+        return;
+    }
+
     // Get the last undo state
     UndoState undoState = m_undoStack.back();
     m_undoStack.pop_back();
@@ -81,6 +95,18 @@ void Engine::redo() {
     if (graphTabUndo(true)) return;
     if (m_redoStack.empty()) return;
     
+    // An object that undo took out comes back, and one that undo brought back goes again.
+    if (m_redoStack.back().kind != UndoState::Kind::Move) {
+        if (m_isPlaying) return;
+        UndoState step = m_redoStack.back();
+        m_redoStack.pop_back();
+        if (redoSceneChange(step, m_sceneObjects, m_selectedObjectIndex, m_undoStack)) {
+            m_gizmoActive = false;
+            markProjectModified();
+        }
+        return;
+    }
+
     // Get the last redo state
     UndoState redoState = m_redoStack.back();
     m_redoStack.pop_back();
@@ -127,7 +153,7 @@ void Engine::startRotationLog() {
     const char* axisNames[] = { "None", "X", "Y", "Z" };
     
     // Write header
-    m_rotationLogFile << "=== FORGE ENGINE ROTATION LOG ===\n";
+    m_rotationLogFile << "=== PROPULSION MK I ROTATION LOG ===\n";
     m_rotationLogFile << "Timestamp: " << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S") << "\n";
     m_rotationLogFile << "Object: " << obj.name << "\n";
     m_rotationLogFile << "Active Axis: " << axisNames[static_cast<int>(m_activeGizmoAxis)] << "\n";
@@ -205,4 +231,4 @@ void Engine::syncQuaternionFromEuler(SceneObject& obj) {
     ));
 }
 
-} // namespace Forge
+} // namespace Propulsion

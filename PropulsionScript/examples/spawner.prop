@@ -1,0 +1,33 @@
+// spawner.prop: keeps a fixed number of enemies alive at set spawn points.
+
+header:
+	needs component:Transform
+	needs file:"enemy.prop" as Enemy when:used
+
+	constant name:MaxAlive type:integer value:3
+	// CHANGED: "[(0, 0, 0), (10, 0, 5), (-8, 0, 12)]" is now one indented "entry" line per item, with named parts.
+	variable name:SpawnPoints type:list of vector3
+		entry x:0 y:0 z:0
+		entry x:10 y:5 z:0
+		entry x:-8 y:12 z:0
+	variable name:Alive type:list of entity
+	variable name:Spawned type:integer
+
+implement:
+	when created:
+		for each Point in SpawnPoints:
+			do SpawnEnemy position:Point
+
+	every 10 seconds:
+		if count of Alive is below MaxAlive:
+			do SpawnEnemy position:item 0 of SpawnPoints
+
+	// CHANGED: "Enemy.Defeated" is now "Enemy sends Defeated".
+	when Enemy sends Defeated as Fallen:
+		remove Fallen from Alive
+
+	action SpawnEnemy position:vector3:
+		if count of Alive is at least MaxAlive, then finish
+		spawn Enemy at:position as Fresh
+		add Fresh to Alive
+		add 1 to Spawned

@@ -2,9 +2,9 @@
 
 /**
  * Object.h
- * The fundamental entity class in Forge Engine.
+ * The fundamental entity class in Propulsion MK I.
  * 
- * Objects are the building blocks of scenes in Forge Engine.
+ * Objects are the building blocks of scenes in Propulsion MK I.
  * They consist of a unique identity (GUID, name) and a collection
  * of Components that define their behavior and appearance.
  * 
@@ -20,10 +20,10 @@
 #include <algorithm>
 #include <functional>
 
-namespace Forge {
+namespace Propulsion {
 
 /**
- * Object - The base entity class in Forge Engine.
+ * Object - The base entity class in Propulsion MK I.
  * 
  * Similar to Unity's GameObject or Unreal's Actor.
  * Contains components that define its properties and behavior.
@@ -300,4 +300,4 @@ private:
     TransformComponent* m_transform = nullptr; // Cached pointer for quick access
 };
 
-} // namespace Forge
+} // namespace Propulsion

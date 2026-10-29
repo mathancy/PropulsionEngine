@@ -9,7 +9,7 @@
 #include <imgui.h>
 #include <algorithm>
 
-namespace Forge {
+namespace Propulsion {
 
 bool NodeGraph::renderSingleImageNodeWidgets(ImageNode* imageNode, const ImVec2& canvasPos) {
     // Render ImGui widgets for a single Image node
@@ -509,4 +509,4 @@ void NodeGraph::renderImageNodeContent(ImDrawList* drawList, ImageNode* node, co
     }
 }
 
-} // namespace Forge
+} // namespace Propulsion

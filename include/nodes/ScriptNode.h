@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 
-/// One input of a script node: a labelled text field (or a choice list) holding ForgeScript text.
+/// One input of a script node: a labelled text field (or a choice list) holding PropulsionScript text.
 struct ScriptPinField {
     int pinId = -1;            // the NodePin this field sits beside
     std::string name;
@@ -43,6 +43,10 @@ struct ScriptNode : public Node {
     /// carry a variable to a field, and goes away once it is wired into one.
     bool isGetter = false;
 
+    /// Not connected to the script yet: kept beside it (in the layout file), and not part of its text until it is
+    /// wired in (see propulsion_graph_edit's add_floating).
+    bool floating = false;
+
     bool hasExecIn = false;
     std::vector<ScriptPinField> fields;   // one per data input, in pin order (after the exec input)
     std::vector<std::string> execLabels;  // one per exec output, in pin order
@@ -59,4 +63,4 @@ struct ScriptNode : public Node {
     bool carriesVariable() const { return isGetter || (isData() && category == "Variables"); }
 };
 
-} // namespace Forge
+} // namespace Propulsion

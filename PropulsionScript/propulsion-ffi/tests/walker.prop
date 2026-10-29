@@ -1,0 +1,17 @@
+// walker.prop: walks forward as fast as its own forward input says (used by tests/ffi.rs).
+
+header:
+	needs component:Transform
+	needs system:Input
+
+	variable name:Speed type:decimal value:5.0
+
+implement:
+	every frame:
+		remember Forward axis moveForward of Input
+		remember Amount Forward times Speed
+		move Self forward by Amount per second
+		if Input is pressing crouch, then add 1 to Transform.Loc.X
+
+	when Input starts pressing jump:
+		add 10 to Transform.Loc.Z

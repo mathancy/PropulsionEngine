@@ -1,4 +1,5 @@
 #include "core/Window.h"
+#include "core/OutputLog.h"
 #include <iostream>
 
 #ifdef _WIN32
@@ -12,13 +13,13 @@
 #include "stb_image.h"
 #include <vector>
 
-namespace Forge {
+namespace Propulsion {
 
 Window::Window(int width, int height, const std::string& title)
     : m_width(width), m_height(height) {
     
     if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
+        OutputLog::print(LogCategory::Engine, LogLevel::Error, "Failed to initialize GLFW");
         exit(EXIT_FAILURE);
     }
 
@@ -29,7 +30,7 @@ Window::Window(int width, int height, const std::string& title)
 
     m_window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
     if (!m_window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
+        OutputLog::print(LogCategory::Engine, LogLevel::Error, "Failed to create GLFW window");
         glfwTerminate();
         exit(EXIT_FAILURE);
     }
@@ -178,12 +179,12 @@ void Window::loadIcon() {
             glfwSetWindowIcon(m_window, 1, &icon);
             stbi_image_free(pixels);
             
-            std::cout << "Loaded window icon from: " << path << std::endl;
+            OutputLog::print(LogCategory::Engine, LogLevel::Info, "Loaded window icon from: ", path);
             return;
         }
     }
     
-    std::cerr << "Warning: Could not load window icon" << std::endl;
+    OutputLog::print(LogCategory::Engine, LogLevel::Warning, "Could not load window icon");
 }
 
 void Window::enableDarkMode() {
@@ -204,4 +205,4 @@ void Window::enableDarkMode() {
 #endif
 }
 
-} // namespace Forge
+} // namespace Propulsion

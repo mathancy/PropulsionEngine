@@ -1,6 +1,6 @@
-# Forge Engine - Troubleshooting Guide
+# Propulsion MK I - Troubleshooting Guide
 
-Common issues and solutions for Forge Engine development.
+Common issues and solutions for Propulsion MK I development.
 
 ---
 
@@ -16,7 +16,7 @@ CMake Error: The source directory "..." does not appear to contain CMakeLists.tx
 **Solution:**
 ```powershell
 # Make sure you're in the right directory
-cd G:\ForgeEngine
+cd G:\PropulsionMKI
 # Then create build directory
 mkdir build
 cd build
@@ -45,7 +45,7 @@ GLAD must be generated manually:
    - Options: ✓ **Generate a loader**
 3. Click **GENERATE**
 4. Download **glad.zip**
-5. Extract to `G:\ForgeEngine\external\glad\`
+5. Extract to `G:\PropulsionMKI\external\glad\`
 
 Verify structure:
 ```powershell
@@ -298,7 +298,7 @@ Values should be approximately (0.8, 0.1, 0.1) for red.
    ```powershell
    cd build
    cmake --build . --config Debug
-   .\bin\Debug\ForgeEngine.exe
+   .\bin\Debug\PropulsionMKI.exe
    ```
    Check console for error messages.
 

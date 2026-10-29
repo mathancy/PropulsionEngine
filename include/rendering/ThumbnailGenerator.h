@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <string>
 
-namespace Forge {
+namespace Propulsion {
 
 class VulkanContext;
 class Mesh;
@@ -124,4 +124,4 @@ private:
     bool findContentBounds(uint32_t size, uint32_t& minX, uint32_t& minY, uint32_t& maxX, uint32_t& maxY);
 };
 
-} // namespace Forge
+} // namespace Propulsion

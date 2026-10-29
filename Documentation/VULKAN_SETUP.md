@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Before building ForgeEngine with Vulkan, you need to install the Vulkan SDK.
+Before building PropulsionMKI with Vulkan, you need to install the Vulkan SDK.
 
 ### Windows Installation
 
@@ -41,8 +41,8 @@ Before building ForgeEngine with Vulkan, you need to install the Vulkan SDK.
 Once Vulkan SDK is installed:
 
 ```powershell
-# Navigate to ForgeEngine directory
-cd g:\ForgeEngine
+# Navigate to PropulsionMKI directory
+cd g:\PropulsionMKI
 
 # Run shader compilation script
 .\compile_shaders.ps1
@@ -57,7 +57,7 @@ This will compile:
 If you prefer to compile manually:
 
 ```powershell
-cd g:\ForgeEngine\shaders
+cd g:\PropulsionMKI\shaders
 & "$env:VULKAN_SDK\Bin\glslc.exe" basic.vert -o basic_vert.spv
 & "$env:VULKAN_SDK\Bin\glslc.exe" basic.frag -o basic_frag.spv
 ```
@@ -77,7 +77,7 @@ cd g:\ForgeEngine\shaders
 
 ### GPU Requirements
 
-ForgeEngine requires:
+PropulsionMKI requires:
 - GPU with Vulkan 1.2+ support
 - Updated graphics drivers
 - Windows 10/11 (64-bit)
